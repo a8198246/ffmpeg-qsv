@@ -252,6 +252,41 @@ int ff_set_dimensions(AVCodecContext *s, int width, int height);
  */
 int ff_side_data_update_matrix_encoding(AVFrame *frame,
                                         enum AVMatrixEncoding matrix_encoding);
+/**
+ * Append an AVPacket to the list creating a new reference
+ * to it.
+ *
+ * @param head List head
+ * @param tail List tail
+ * @param pkt  The packet being appended
+ * @return < 0 on failure and 0 on success.
+ */
+int ff_packet_list_put(AVPacketList **head, AVPacketList **tail,
+                       AVPacket *pkt);
+
+/**
+ * Remove the oldest AVPacket in the list and return it.
+ *
+ * @note The pkt will be overwritten completely. The caller
+ *       owns the packet and must unref it by itself.
+ *
+ * @see av_packet_unref av_packet_ref
+ *
+ * @param head List head.
+ * @param tail List tail.
+ * @param pkt  Pointer to an initialized AVPacket struct
+ * @return < 0 on failure and 0 on success.
+ */
+int ff_packet_list_get(AVPacketList **head, AVPacketList **tail,
+                       AVPacket *pkt);
+
+/**
+ * Wipe the list and unref all the packets in it.
+ *
+ * @param head List head.
+ * @param tail List tail.
+ */
+void ff_packet_list_free(AVPacketList **head, AVPacketList **tail);
 
 /**
  * Set various frame properties from the codec context / packet data.
