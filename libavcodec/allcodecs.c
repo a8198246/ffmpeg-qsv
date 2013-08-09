@@ -167,6 +167,7 @@ void avcodec_register_all(void)
     REGISTER_ENCDEC (H263P,             h263p);
     REGISTER_DECODER(H264,              h264);
     REGISTER_DECODER(H264_CRYSTALHD,    h264_crystalhd);
+    REGISTER_DECODER(H264_QSV,          h264_qsv);
     REGISTER_DECODER(H264_VDA,          h264_vda);
     REGISTER_DECODER(H264_VDPAU,        h264_vdpau);
     REGISTER_DECODER(HEVC,              hevc);
@@ -199,6 +200,7 @@ void avcodec_register_all(void)
 #endif /* FF_API_XVMC */
     REGISTER_ENCDEC (MPEG1VIDEO,        mpeg1video);
     REGISTER_ENCDEC (MPEG2VIDEO,        mpeg2video);
+    REGISTER_DECODER(MPEG2VIDEO_QSV,    mpeg2video_qsv);
     REGISTER_ENCDEC (MPEG4,             mpeg4);
     REGISTER_DECODER(MPEG4_CRYSTALHD,   mpeg4_crystalhd);
     REGISTER_DECODER(MPEG4_VDPAU,       mpeg4_vdpau);
