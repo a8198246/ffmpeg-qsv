@@ -145,6 +145,7 @@ Component options:
 
 Hardware accelerators:
   --disable-dxva2          disable DXVA2 code [autodetect]
+  --enable-qsv             enable QSV code
   --disable-vaapi          disable VAAPI code [autodetect]
   --enable-vda             enable VDA code
   --disable-vdpau          disable VDPAU code [autodetect]
@@ -1229,6 +1230,7 @@ DOCUMENT_LIST="
 
 HWACCEL_LIST="
     dxva2
+    qsv
     vaapi
     vda
     vdpau
@@ -1933,6 +1935,8 @@ zmbv_encoder_select="zlib"
 # hardware accelerators
 crystalhd_deps="libcrystalhd_libcrystalhd_if_h"
 dxva2_deps="dxva2api_h"
+qsv_deps="mfx_mfxvideo_h"
+qsv_extralibs="-lmfx"
 vaapi_deps="va_va_h"
 vda_deps="VideoDecodeAcceleration_VDADecoder_h pthreads"
 vda_extralibs="-framework CoreFoundation -framework VideoDecodeAcceleration -framework QuartzCore"
@@ -1945,6 +1949,8 @@ h263_vdpau_hwaccel_select="h263_decoder"
 h264_crystalhd_decoder_select="crystalhd h264_mp4toannexb_bsf h264_parser"
 h264_dxva2_hwaccel_deps="dxva2"
 h264_dxva2_hwaccel_select="h264_decoder"
+h264_qsv_decoder_deps="qsv"
+h264_qsv_decoder_select="h264_parser"
 h264_vaapi_hwaccel_deps="vaapi"
 h264_vaapi_hwaccel_select="h264_decoder"
 h264_vda_decoder_deps="vda"
@@ -4148,6 +4154,7 @@ check_header dxva2api.h -D_WIN32_WINNT=0x0600
 check_header io.h
 check_header libcrystalhd/libcrystalhd_if.h
 check_header malloc.h
+check_header mfx/mfxvideo.h
 check_header poll.h
 check_header sys/mman.h
 check_header sys/param.h
