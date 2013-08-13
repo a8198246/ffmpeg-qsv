@@ -1999,7 +1999,8 @@ int attribute_align_arg avcodec_decode_video2(AVCodecContext *avctx, AVFrame *pi
         else {
             ret = avctx->codec->decode(avctx, picture, got_picture_ptr,
                                        &tmp);
-            picture->pkt_dts = avpkt->dts;
+            if (!(avctx->codec->capabilities & CODEC_CAP_PKT_TS))
+                picture->pkt_dts = avpkt->dts;
 
             if(!avctx->has_b_frames){
                 av_frame_set_pkt_pos(picture, avpkt->pos);
@@ -2140,7 +2141,8 @@ int attribute_align_arg avcodec_decode_audio4(AVCodecContext *avctx,
             ret = ff_thread_decode_frame(avctx, frame, got_frame_ptr, &tmp);
         else {
             ret = avctx->codec->decode(avctx, frame, got_frame_ptr, &tmp);
-            frame->pkt_dts = avpkt->dts;
+            if (!(avctx->codec->capabilities & CODEC_CAP_PKT_TS))
+                frame->pkt_dts = avpkt->dts;
         }
         if (ret >= 0 && *got_frame_ptr) {
             add_metadata_from_side_data(avctx, frame);

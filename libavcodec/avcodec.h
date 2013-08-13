@@ -825,6 +825,10 @@ typedef struct RcOverride{
  */
 #define CODEC_CAP_VARIABLE_FRAME_SIZE 0x10000
 /**
+ * Codec sets by its own the frame pkt_pts and pkt_dts. (internal use only)
+ */
+#define CODEC_CAP_PKT_TS 0x20000
+/**
  * Codec is intra only.
  */
 #define CODEC_CAP_INTRA_ONLY       0x40000000
