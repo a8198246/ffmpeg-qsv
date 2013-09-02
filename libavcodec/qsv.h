@@ -30,7 +30,7 @@
 #include "libavutil/avutil.h"
 
 #define QSV_VERSION_MAJOR 1
-#define QSV_VERSION_MINOR 6
+#define QSV_VERSION_MINOR 1
 
 #define ASYNC_DEPTH_DEFAULT 4       // internal parallelism
 #define SYNC_TIME_DEFAULT 5 * 1000  // 5s
