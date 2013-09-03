@@ -282,16 +282,17 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
     ff_packet_list_put(&q->pending, &q->pending_end, avpkt);
 
     if (!q->wait) {
-        ff_packet_list_get(&q->pending, &q->pending_end, avpkt);
+        AVPacket pkt = { 0 };
+        ff_packet_list_get(&q->pending, &q->pending_end, &pkt);
 
-        if ((ret = put_dts(q, avpkt->pts, avpkt->dts)) < 0)
+        if ((ret = put_dts(q, pkt.pts, pkt.dts)) < 0)
             return ret;
 
-        q->bs.TimeStamp = avpkt->pts;
+        q->bs.TimeStamp = pkt.pts;
 
-        ret = bitstream_enqueue(&q->bs, avpkt->data, avpkt->size);
+        ret = bitstream_enqueue(&q->bs, pkt.data, pkt.size);
 
-        av_packet_unref(avpkt);
+        av_packet_unref(&pkt);
 
         if (ret < 0)
             return ret;
