@@ -275,17 +275,21 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
     mfxFrameSurface1 *insurf;
     mfxFrameSurface1 *outsurf;
     mfxSyncPoint sync;
-    int ret, i = 0;
-    int size = avpkt->size;
+    mfxBitstream *bs = &q->bs;
+    int size         = avpkt->size;
+    int ret, i;
 
     *got_frame = 0;
 
-    ff_packet_list_put(&q->pending, &q->pending_end, avpkt);
+    if (size)
+        ff_packet_list_put(&q->pending, &q->pending_end, avpkt);
 
     ret = q->last_ret;
     do {
         if (ret == MFX_ERR_MORE_DATA) {
-            if (q->pending) {
+            if (!bs) {
+                break;
+            } else if (q->pending) {
                 AVPacket pkt = { 0 };
 
                 ff_packet_list_get(&q->pending, &q->pending_end, &pkt);
@@ -300,6 +304,9 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
 
                 if (ret < 0)
                     return ret;
+            } else if (!size) {
+                // Flush cached frames when EOF
+                bs = NULL;
             } else {
                 break;
             }
@@ -308,7 +315,7 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
         if (!(insurf = get_surface(q)))
             break;
 
-        ret = MFXVideoDECODE_DecodeFrameAsync(q->session, &q->bs,
+        ret = MFXVideoDECODE_DecodeFrameAsync(q->session, bs,
                                               insurf, &outsurf, &sync);
     } while (ret == MFX_ERR_MORE_SURFACE || ret == MFX_ERR_MORE_DATA);
 
