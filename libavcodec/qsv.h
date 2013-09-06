@@ -34,6 +34,7 @@
 
 #define ASYNC_DEPTH_DEFAULT 4       // internal parallelism
 #define SYNC_TIME_DEFAULT 5 * 1000  // 5s
+#define TIMEOUT_DEFAULT 5 * 1000    // 5s
 
 
 typedef struct QSVContext {
@@ -47,6 +48,7 @@ typedef struct QSVContext {
     mfxSyncPoint sync;
     mfxBitstream bs;
     int last_ret;
+    int timeout;
     AVPacketList *pending, *pending_end;
 } QSVContext;
 

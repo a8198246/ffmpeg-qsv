@@ -121,6 +121,20 @@ static void qsv_dec_flush(AVCodecContext *avctx)
     ff_qsv_flush(&q->qsv);
 }
 
+#define OFFSET(x) offsetof(QSVH264Context, x)
+#define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
+static const AVOption options[] = {
+    { "timeout", "Maximum timeout in milliseconds when the device has been busy", OFFSET(qsv.timeout), AV_OPT_TYPE_INT, { .i64 = TIMEOUT_DEFAULT }, 0, INT_MAX, VD },
+    { NULL },
+};
+
+static const AVClass class = {
+    .class_name = "h264_qsv",
+    .item_name  = av_default_item_name,
+    .option     = options,
+    .version    = LIBAVUTIL_VERSION_INT,
+};
+
 AVCodec ff_h264_qsv_decoder = {
     .name           = "h264_qsv",
     .long_name      = NULL_IF_CONFIG_SMALL("H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10 (Intel Quick Sync Video acceleration)"),
@@ -132,4 +146,5 @@ AVCodec ff_h264_qsv_decoder = {
     .flush          = qsv_dec_flush,
     .close          = qsv_dec_close,
     .capabilities   = CODEC_CAP_DELAY | CODEC_CAP_PKT_TS,
+    .priv_class     = &class,
 };

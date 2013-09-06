@@ -27,6 +27,7 @@
 #include "libavutil/common.h"
 #include "libavutil/mem.h"
 #include "libavutil/log.h"
+#include "libavutil/time.h"
 #include "internal.h"
 #include "avcodec.h"
 #include "qsv.h"
@@ -277,6 +278,7 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
     mfxSyncPoint sync;
     mfxBitstream *bs = &q->bs;
     int size         = avpkt->size;
+    int busymsec     = 0;
     int ret, i;
 
     *got_frame = 0;
@@ -317,7 +319,20 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
 
         ret = MFXVideoDECODE_DecodeFrameAsync(q->session, bs,
                                               insurf, &outsurf, &sync);
-    } while (ret == MFX_ERR_MORE_SURFACE || ret == MFX_ERR_MORE_DATA);
+
+        if (ret == MFX_WRN_DEVICE_BUSY) {
+            if (busymsec > q->timeout) {
+                av_log(avctx, AV_LOG_WARNING, "Timeout, device is so busy\n");
+                return AVERROR(EIO);
+            } else {
+                av_usleep(1000);
+                busymsec++;
+            }
+        } else {
+            busymsec = 0;
+        }
+    } while (ret == MFX_ERR_MORE_SURFACE || ret == MFX_ERR_MORE_DATA ||
+             ret == MFX_WRN_DEVICE_BUSY);
 
     q->last_ret = ret;
 
