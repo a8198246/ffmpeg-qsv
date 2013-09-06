@@ -369,7 +369,9 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
         frame->pkt_dts = dts;
 
         frame->repeat_pict =
-            outsurf->Info.PicStruct & MFX_PICSTRUCT_FIELD_REPEATED;
+            outsurf->Info.PicStruct & MFX_PICSTRUCT_FRAME_TRIPLING ? 4 :
+            outsurf->Info.PicStruct & MFX_PICSTRUCT_FRAME_DOUBLING ? 2 :
+            outsurf->Info.PicStruct & MFX_PICSTRUCT_FIELD_REPEATED ? 1 : 0;
         frame->top_field_first =
             outsurf->Info.PicStruct & MFX_PICSTRUCT_FIELD_TFF;
         frame->interlaced_frame =
