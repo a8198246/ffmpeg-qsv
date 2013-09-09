@@ -84,29 +84,10 @@ static int codec_id_to_mfx(enum AVCodecID codec_id)
     return AVERROR(ENOSYS);
 }
 
-static int qsv_timestamps_alloc(QSVContext *q, mfxFrameAllocRequest *req)
+static void reset_timestamps(QSVContext *q)
 {
-    int ret    = AVERROR(ENOMEM);
-
-    q->dts = av_mallocz_array(q->nb_timestamps, sizeof(*q->dts));
-    q->pts = av_mallocz_array(q->nb_timestamps, sizeof(*q->pts));
-
-    if (!q->dts || !q->pts)
-        goto fail;
-
     for (int i = 0; i < q->nb_timestamps; i++)
-        q->pts[i] = q->dts[i] = AV_NOPTS_VALUE;
-
-    if ((ret = MFXVideoDECODE_Init(q->session, &q->param)))
-        ret = ff_qsv_error(ret);
-
-fail:
-    if (ret) {
-        av_free(q->dts);
-        av_free(q->pts);
-    }
-
-    return ret;
+        q->timestamps[i].pts = q->timestamps[i].dts = AV_NOPTS_VALUE;
 }
 
 int ff_qsv_init(AVCodecContext *c, QSVContext *q)
@@ -151,9 +132,19 @@ int ff_qsv_init(AVCodecContext *c, QSVContext *q)
         return ff_qsv_error(ret);
 
     q->nb_timestamps = req.NumFrameSuggested + q->param.AsyncDepth;
+    q->put_dts_cnt   = 0;
+    q->decoded_cnt   = 0;
     q->last_ret      = MFX_ERR_MORE_DATA;
 
-    return qsv_timestamps_alloc(q, &req);
+    if (!(q->timestamps = av_mallocz_array(q->nb_timestamps, sizeof(*q->timestamps))))
+        return AVERROR(ENOMEM);
+
+    reset_timestamps(q);
+
+    if ((ret = MFXVideoDECODE_Init(q->session, &q->param)))
+        ret = ff_qsv_error(ret);
+
+    return ret;
 }
 
 static int bitstream_realloc(mfxBitstream *bs, int size)
@@ -264,7 +255,22 @@ static mfxFrameSurface1 *get_surface(AVCodecContext *avctx, QSVContext *q)
     return &list->surface;
 }
 
-static int get_dts(QSVContext *q, int64_t pts,  int64_t *dts)
+static int realloc_timestamps(QSVContext *q, int old_nmemb, int new_nmemb)
+{
+    QSVTimeStamp *tmp = av_realloc_array(q->timestamps, new_nmemb, sizeof(*q->timestamps));
+    if (!tmp)
+        return AVERROR(ENOMEM);
+
+    q->timestamps = tmp;
+    q->nb_timestamps = new_nmemb;
+
+    for (int i = old_nmemb; i < q->nb_timestamps; i++)
+        q->timestamps[i].pts = q->timestamps[i].dts = AV_NOPTS_VALUE;
+
+    return 0;
+}
+
+static int get_dts(QSVContext *q, int64_t pts, int64_t *dts)
 {
     int i;
 
@@ -274,7 +280,7 @@ static int get_dts(QSVContext *q, int64_t pts,  int64_t *dts)
     }
 
     for (i = 0; i < q->nb_timestamps; i++) {
-        if (q->pts[i] == pts)
+        if (q->timestamps[i].pts == pts)
             break;
     }
     if (i == q->nb_timestamps) {
@@ -283,28 +289,32 @@ static int get_dts(QSVContext *q, int64_t pts,  int64_t *dts)
                pts);
         return AVERROR_BUG;
     }
-    *dts = q->dts[i];
+    *dts = q->timestamps[i].dts;
 
-    q->pts[i] = AV_NOPTS_VALUE;
+    q->timestamps[i].pts = AV_NOPTS_VALUE;
 
     return 0;
 }
 
 static int put_dts(QSVContext *q, int64_t pts, int64_t dts)
 {
-    int i;
-    for (i = 0; i < q->nb_timestamps; i++) {
-        if (q->pts[i] == AV_NOPTS_VALUE)
-            break;
+    int ret, i;
+
+    if (!q->decoded_cnt && q->nb_timestamps == q->put_dts_cnt) {
+        // For decoder delay
+        if ((ret = realloc_timestamps(q, q->nb_timestamps, q->nb_timestamps * 2)) < 0)
+            return ret;
+    } else if (q->decoded_cnt == 1 && q->nb_timestamps < (q->put_dts_cnt + 32)) {
+        // For frame reordering
+        // I[31]P[30]B[29]B[28] ... B[1]B[0] (Number in [] is display order)
+        if ((ret = realloc_timestamps(q, q->nb_timestamps, q->put_dts_cnt + 32)) < 0)
+            return ret;
     }
 
-    if (i == q->nb_timestamps) {
-        av_log(q, AV_LOG_INFO, "No slot available.\n");
-        return AVERROR_BUG;
-    }
-
-    q->pts[i] = pts;
-    q->dts[i] = dts;
+    i = q->put_dts_cnt % q->nb_timestamps;
+    q->timestamps[i].pts = pts;
+    q->timestamps[i].dts = dts;
+    q->put_dts_cnt++;
 
     return 0;
 }
@@ -409,6 +419,7 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
         outsurf->Data.UV = workframe->data[1];
 
         *got_frame = 1;
+        q->decoded_cnt++;
 
         frame->pkt_pts = frame->pts = outsurf->Data.TimeStamp;
         frame->pkt_dts = dts;
@@ -440,6 +451,8 @@ int ff_qsv_flush(QSVContext *q)
 
     free_surface_list(q);
 
+    reset_timestamps(q);
+
     ff_packet_list_free(&q->pending, &q->pending_end);
 
     return ret;
@@ -450,6 +463,8 @@ int ff_qsv_close(QSVContext *q)
     int ret = MFXClose(q->session);
 
     free_surface_list(q);
+
+    av_freep(&q->timestamps);
 
     ff_packet_list_free(&q->pending, &q->pending_end);
 
