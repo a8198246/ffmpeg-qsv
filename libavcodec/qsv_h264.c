@@ -67,7 +67,7 @@ static av_cold int qsv_dec_init(AVCodecContext *avctx)
 
     ret = ff_qsv_init(avctx, &q->qsv);
     if (ret < 0) {
-        av_freep(bs->Data);
+        av_freep(&bs->Data);
         av_bitstream_filter_close(q->bsf);
     }
 
@@ -111,7 +111,7 @@ static int qsv_dec_close (AVCodecContext *avctx)
 
     av_bitstream_filter_close(q->bsf);
     av_freep(&q->qsv.bs.Data);
-    return ff_qsv_error(ret);
+    return ret;
 }
 
 static void qsv_dec_flush(AVCodecContext *avctx)

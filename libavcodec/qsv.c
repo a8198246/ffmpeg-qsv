@@ -249,7 +249,7 @@ static int get_dts(QSVContext *q, int64_t pts,  int64_t *dts)
     return 0;
 }
 
-static int put_dts(QSVContext *q, int64_t pts, int dts)
+static int put_dts(QSVContext *q, int64_t pts, int64_t dts)
 {
     int i;
     for (i = 0; i < q->nb_surfaces; i++) {
