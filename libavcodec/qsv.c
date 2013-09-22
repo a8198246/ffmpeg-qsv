@@ -165,6 +165,7 @@ int ff_qsv_init(AVCodecContext *c, QSVContext *q)
         return ff_qsv_error(ret);
 
     q->nb_surfaces = req.NumFrameSuggested + q->param.AsyncDepth;
+    q->last_ret    = MFX_ERR_MORE_DATA;
 
     return qsv_surface_alloc(q, &req);
 }
@@ -281,35 +282,40 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
 
     ff_packet_list_put(&q->pending, &q->pending_end, avpkt);
 
-    if (!q->wait) {
-        AVPacket pkt = { 0 };
-        ff_packet_list_get(&q->pending, &q->pending_end, &pkt);
+    ret = q->last_ret;
+    do {
+        if (ret == MFX_ERR_MORE_DATA) {
+            if (q->pending) {
+                AVPacket pkt = { 0 };
 
-        if ((ret = put_dts(q, pkt.pts, pkt.dts)) < 0)
-            return ret;
+                ff_packet_list_get(&q->pending, &q->pending_end, &pkt);
 
-        q->bs.TimeStamp = pkt.pts;
+                if (!(ret = put_dts(q, pkt.pts, pkt.dts))) {
+                    q->bs.TimeStamp = pkt.pts;
 
-        ret = bitstream_enqueue(&q->bs, pkt.data, pkt.size);
+                    ret = bitstream_enqueue(&q->bs, pkt.data, pkt.size);
+                }
 
-        av_packet_unref(&pkt);
+                av_packet_unref(&pkt);
 
-        if (ret < 0)
-            return ret;
-    }
+                if (ret < 0)
+                    return ret;
+            } else {
+                break;
+            }
+        }
 
-    ret = MFX_ERR_MORE_SURFACE;
+        if (!(insurf = get_surface(q)))
+            break;
 
-    while ((insurf = get_surface(q)) && ret == MFX_ERR_MORE_SURFACE) {
         ret = MFXVideoDECODE_DecodeFrameAsync(q->session, &q->bs,
                                               insurf, &outsurf, &sync);
-    }
+    } while (ret == MFX_ERR_MORE_SURFACE || ret == MFX_ERR_MORE_DATA);
 
-    q->wait = 1;
+    q->last_ret = ret;
 
     switch (ret) {
     case MFX_ERR_MORE_DATA:
-        q->wait = 0;
         ret = 0;
         break;
     case MFX_WRN_VIDEO_PARAM_CHANGED:
