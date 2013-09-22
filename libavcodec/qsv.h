@@ -37,14 +37,19 @@
 #define TIMEOUT_DEFAULT 5 * 1000    // 5s
 
 
+typedef struct QSVSurfaceList {
+    mfxFrameSurface1 surface;
+    struct QSVSurfaceList *next;
+} QSVSurfaceList;
+
 typedef struct QSVContext {
     AVClass *class;
     mfxSession session;
     mfxVideoParam param;
-    mfxFrameSurface1 *surfaces;
+    QSVSurfaceList *surflist;
     int64_t *dts;
     int64_t *pts;
-    int nb_surfaces;
+    int nb_timestamps;
     mfxSyncPoint sync;
     mfxBitstream bs;
     int last_ret;

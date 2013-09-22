@@ -145,6 +145,6 @@ AVCodec ff_h264_qsv_decoder = {
     .decode         = qsv_dec_frame,
     .flush          = qsv_dec_flush,
     .close          = qsv_dec_close,
-    .capabilities   = CODEC_CAP_DELAY | CODEC_CAP_PKT_TS,
+    .capabilities   = CODEC_CAP_DELAY | CODEC_CAP_PKT_TS | CODEC_CAP_DR1,
     .priv_class     = &class,
 };
