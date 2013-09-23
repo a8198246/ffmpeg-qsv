@@ -56,6 +56,7 @@ typedef struct QSVContext {
     int nb_timestamps;
     int put_dts_cnt;
     int decoded_cnt;
+    int ts_by_qsv;
     mfxSyncPoint sync;
     mfxBitstream bs;
     int last_ret;

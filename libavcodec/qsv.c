@@ -361,6 +361,11 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
 
                 if (!(ret = put_dts(q, pkt.pts, pkt.dts))) {
                     q->bs.TimeStamp = pkt.pts;
+                    // QSV calculates TimeStamp of output based on the first
+                    //  TimeStamp when q->bs.TimeStamp = MFX_TIMESTAMP_UNKNOWN
+                    if (q->ts_by_qsv)
+                        if (q->put_dts_cnt > 1 || pkt.pts == AV_NOPTS_VALUE)
+                            q->bs.TimeStamp = MFX_TIMESTAMP_UNKNOWN;
 
                     ret = bitstream_enqueue(&q->bs, pkt.data, pkt.size);
                 }
@@ -416,13 +421,18 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
         ret = 0;
 
     if (sync) {
-        int64_t dts;
+        int64_t pts, dts;
         AVFrame *workframe;
 
         MFXVideoCORE_SyncOperation(q->session, sync, 60000);
 
-        if ((ret = get_dts(q, outsurf->Data.TimeStamp, &dts)) < 0)
-            return ret;
+        pts = outsurf->Data.TimeStamp;
+        if (q->ts_by_qsv) {
+            dts = pts;
+        } else {
+            if ((ret = get_dts(q, outsurf->Data.TimeStamp, &dts)) < 0)
+                return ret;
+        }
 
         workframe = outsurf->Data.MemId;
         av_frame_move_ref(frame, workframe);
@@ -436,7 +446,7 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
         *got_frame = 1;
         q->decoded_cnt++;
 
-        frame->pkt_pts = frame->pts = outsurf->Data.TimeStamp;
+        frame->pkt_pts = frame->pts = pts;
         frame->pkt_dts = dts;
 
         frame->repeat_pict =
