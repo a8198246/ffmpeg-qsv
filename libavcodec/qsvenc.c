@@ -155,7 +155,8 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
     q->param.mfx.FrameInfo.ChromaFormat  = MFX_CHROMAFORMAT_YUV420;
 
     av_log(avctx, AV_LOG_INFO, "FrameRate:%d/%d\n",
-           avctx->time_base.den, avctx->time_base.num);
+           q->param.mfx.FrameInfo.FrameRateExtN,
+           q->param.mfx.FrameInfo.FrameRateExtD);
 
     q->extco.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION;
     q->extco.Header.BufferSz      = sizeof(q->extco);
