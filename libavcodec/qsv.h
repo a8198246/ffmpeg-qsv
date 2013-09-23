@@ -60,6 +60,7 @@ typedef struct QSVContext {
     mfxBitstream bs;
     int last_ret;
     int need_reinit;
+    int async_depth;
     int timeout;
     AVPacketList *pending, *pending_end;
 } QSVContext;

@@ -119,7 +119,7 @@ int ff_qsv_init(AVCodecContext *c, QSVContext *q)
                "Unknown Intel QuickSync implementation %d.\n", impl);
 
     q->param.IOPattern  = MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
-    q->param.AsyncDepth = ASYNC_DEPTH_DEFAULT;
+    q->param.AsyncDepth = q->async_depth;
 
     if ((ret = MFXVideoDECODE_DecodeHeader(q->session, bs, &q->param)) < 0)
         return ff_qsv_error(ret);
