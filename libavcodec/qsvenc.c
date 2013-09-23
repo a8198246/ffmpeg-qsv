@@ -558,38 +558,40 @@ static void print_frametype(AVCodecContext *avctx, QSVEncContext *q,
 {
     char buf[1024];
 
-    buf[0] = '\0';
+    if (av_log_get_level() >= AV_LOG_DEBUG) {
+        buf[0] = '\0';
 
-    snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf),
-             "TimeStamp:%"PRId64", ", bs->TimeStamp);
-    snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "FrameType:");
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf),
+                 "TimeStamp:%"PRId64", ", bs->TimeStamp);
+        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "FrameType:");
 
-    if (bs->FrameType & MFX_FRAMETYPE_I)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " I");
-    if (bs->FrameType & MFX_FRAMETYPE_P)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " P");
-    if (bs->FrameType & MFX_FRAMETYPE_B)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " B");
-    if (bs->FrameType & MFX_FRAMETYPE_S)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " S");
-    if (bs->FrameType & MFX_FRAMETYPE_REF)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " REF");
-    if (bs->FrameType & MFX_FRAMETYPE_IDR)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " IDR");
-    if (bs->FrameType & MFX_FRAMETYPE_xI)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xI");
-    if (bs->FrameType & MFX_FRAMETYPE_xP)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xP");
-    if (bs->FrameType & MFX_FRAMETYPE_xB)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xB");
-    if (bs->FrameType & MFX_FRAMETYPE_xS)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xS");
-    if (bs->FrameType & MFX_FRAMETYPE_xREF)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xREF");
-    if (bs->FrameType & MFX_FRAMETYPE_xIDR)
-        snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xIDR");
+        if (bs->FrameType & MFX_FRAMETYPE_I)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " I");
+        if (bs->FrameType & MFX_FRAMETYPE_P)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " P");
+        if (bs->FrameType & MFX_FRAMETYPE_B)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " B");
+        if (bs->FrameType & MFX_FRAMETYPE_S)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " S");
+        if (bs->FrameType & MFX_FRAMETYPE_REF)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " REF");
+        if (bs->FrameType & MFX_FRAMETYPE_IDR)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " IDR");
+        if (bs->FrameType & MFX_FRAMETYPE_xI)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xI");
+        if (bs->FrameType & MFX_FRAMETYPE_xP)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xP");
+        if (bs->FrameType & MFX_FRAMETYPE_xB)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xB");
+        if (bs->FrameType & MFX_FRAMETYPE_xS)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xS");
+        if (bs->FrameType & MFX_FRAMETYPE_xREF)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xREF");
+        if (bs->FrameType & MFX_FRAMETYPE_xIDR)
+            snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " xIDR");
 
-    av_log(q, AV_LOG_DEBUG, "%*s%s\n", 4 * indent, "", buf);
+        av_log(q, AV_LOG_DEBUG, "%*s%s\n", 4 * indent, "", buf);
+    }
 }
 
 int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
