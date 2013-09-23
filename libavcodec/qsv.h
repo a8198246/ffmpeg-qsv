@@ -68,6 +68,8 @@ typedef struct QSVContext {
 
 int ff_qsv_error(int mfx_err);
 
+int ff_qsv_codec_id_to_mfx(enum AVCodecID codec_id);
+
 int ff_qsv_init(AVCodecContext *s, QSVContext *q);
 
 int ff_qsv_decode(AVCodecContext *s, QSVContext *q,

@@ -67,7 +67,7 @@ int ff_qsv_error(int mfx_err)
     }
 }
 
-static int codec_id_to_mfx(enum AVCodecID codec_id)
+int ff_qsv_codec_id_to_mfx(enum AVCodecID codec_id)
 {
     switch (codec_id) {
     case AV_CODEC_ID_H264:
@@ -98,7 +98,7 @@ int ff_qsv_init(AVCodecContext *c, QSVContext *q)
     mfxBitstream *bs         = &q->bs;
     mfxFrameAllocRequest req = { { 0 } };
 
-    if ((ret = codec_id_to_mfx(c->codec_id)) < 0)
+    if ((ret = ff_qsv_codec_id_to_mfx(c->codec_id)) < 0)
         return ret;
 
     q->param.mfx.CodecId = ret;
@@ -110,13 +110,13 @@ int ff_qsv_init(AVCodecContext *c, QSVContext *q)
 
     if (impl & MFX_IMPL_SOFTWARE)
         av_log(c, AV_LOG_INFO,
-               "Using Intel QuickSync software implementation.\n");
+               "Using Intel QuickSync decoder software implementation.\n");
     else if (impl & MFX_IMPL_HARDWARE)
         av_log(c, AV_LOG_INFO,
-               "Using Intel QuickSync hardware accelerated implementation.\n");
+               "Using Intel QuickSync decoder hardware accelerated implementation.\n");
     else
         av_log(c, AV_LOG_INFO,
-               "Unknown Intel QuickSync implementation %d.\n", impl);
+               "Unknown Intel QuickSync decoder implementation %d.\n", impl);
 
     q->param.IOPattern  = MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
     q->param.AsyncDepth = q->async_depth;
