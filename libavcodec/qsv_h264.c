@@ -83,6 +83,11 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
     int size;
     int ret;
 
+    // Reinit so finished flushing old video parameter cached frames
+    if (q->qsv.need_reinit && q->qsv.last_ret == MFX_ERR_MORE_DATA)
+        if ((ret = ff_qsv_reinit(avctx, &q->qsv)) < 0)
+            return ret;
+
     av_bitstream_filter_filter(q->bsf, avctx, NULL,
                                &p, &size,
                                avpkt->data, avpkt->size, 0);

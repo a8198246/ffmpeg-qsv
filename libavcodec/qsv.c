@@ -124,8 +124,17 @@ int ff_qsv_init(AVCodecContext *c, QSVContext *q)
     if ((ret = MFXVideoDECODE_DecodeHeader(q->session, bs, &q->param)) < 0)
         return ff_qsv_error(ret);
 
-    bs->DataFlag   = MFX_BITSTREAM_COMPLETE_FRAME;
-    bs->DataLength = bs->DataOffset = 0;
+    c->width         = q->param.mfx.FrameInfo.CropW;
+    c->height        = q->param.mfx.FrameInfo.CropH;
+    c->coded_width   = q->param.mfx.FrameInfo.Width;
+    c->coded_height  = q->param.mfx.FrameInfo.Height;
+    c->time_base.den = q->param.mfx.FrameInfo.FrameRateExtN;
+    c->time_base.num = q->param.mfx.FrameInfo.FrameRateExtD / c->ticks_per_frame;
+
+    if (!q->need_reinit)
+        bs->DataLength = bs->DataOffset = 0;
+
+    bs->DataFlag = MFX_BITSTREAM_COMPLETE_FRAME;
 
     ret = MFXVideoDECODE_QueryIOSurf(q->session, &q->param, &req);
     if (ret < 0)
@@ -336,6 +345,10 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
     if (size)
         ff_packet_list_put(&q->pending, &q->pending_end, avpkt);
 
+    // (2) Flush cached frames before reinit
+    if (q->need_reinit)
+        bs = NULL;
+
     ret = q->last_ret;
     do {
         if (ret == MFX_ERR_MORE_DATA) {
@@ -362,6 +375,18 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
             } else {
                 break;
             }
+        } else if (ret == MFX_WRN_VIDEO_PARAM_CHANGED) {
+            // Detected new seaquence header has compatible video parameter
+            // Automatically bitstream move forward next time
+        } else if (ret == MFX_ERR_INCOMPATIBLE_VIDEO_PARAM) {
+            // Detected new seaquence header has incompatible video parameter
+            if (bs) {
+                // (1) Flush cached frames before reinit
+                bs = NULL;
+                q->need_reinit = 1;
+            } else {
+                return AVERROR_BUG;
+            }
         }
 
         if (!(insurf = get_surface(avctx, q)))
@@ -382,23 +407,13 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
             busymsec = 0;
         }
     } while (ret == MFX_ERR_MORE_SURFACE || ret == MFX_ERR_MORE_DATA ||
-             ret == MFX_WRN_DEVICE_BUSY);
+             ret == MFX_WRN_DEVICE_BUSY  || ret == MFX_WRN_VIDEO_PARAM_CHANGED ||
+             ret == MFX_ERR_INCOMPATIBLE_VIDEO_PARAM);
 
     q->last_ret = ret;
 
-    switch (ret) {
-    case MFX_ERR_MORE_DATA:
+    if (ret == MFX_ERR_MORE_DATA)
         ret = 0;
-        break;
-    case MFX_WRN_VIDEO_PARAM_CHANGED:
-    // FIXME handle the param change properly.
-    //  ret = MFXVideoDECODE_QueryIOSurf(q->session, &q->qsv.param, &req);
-    //    if (ret < 0)
-    //        return ff_qsv_error(ret);
-        ret = 0;
-    default:
-        break;
-    }
 
     if (sync) {
         int64_t dts;
@@ -469,4 +484,21 @@ int ff_qsv_close(QSVContext *q)
     ff_packet_list_free(&q->pending, &q->pending_end);
 
     return ff_qsv_error(ret);
+}
+
+int ff_qsv_reinit(AVCodecContext *avctx, QSVContext *q)
+{
+    int ret;
+
+    MFXClose(q->session);
+
+    free_surface_list(q);
+
+    av_freep(&q->timestamps);
+
+    ret = ff_qsv_init(avctx, q);
+
+    q->need_reinit = 0;
+
+    return ret;
 }

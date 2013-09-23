@@ -59,6 +59,7 @@ typedef struct QSVContext {
     mfxSyncPoint sync;
     mfxBitstream bs;
     int last_ret;
+    int need_reinit;
     int timeout;
     AVPacketList *pending, *pending_end;
 } QSVContext;
@@ -74,5 +75,7 @@ int ff_qsv_decode(AVCodecContext *s, QSVContext *q,
 int ff_qsv_flush(QSVContext *q);
 
 int ff_qsv_close(QSVContext *q);
+
+int ff_qsv_reinit(AVCodecContext *s, QSVContext *q);
 
 #endif /* AVCODEC_QSV_H */
