@@ -459,7 +459,7 @@ static mfxBitstream *get_bitstream(QSVEncContext *q)
     return &list->bs;
 }
 
-static int release_bitstream(QSVEncContext *q, mfxBitstream *bs)
+static void release_bitstream(QSVEncContext *q, mfxBitstream *bs)
 {
     QSVBitstreamList **next = &q->bslist;
     QSVBitstreamList *list;
@@ -471,11 +471,9 @@ static int release_bitstream(QSVEncContext *q, mfxBitstream *bs)
             list->locked = 0;
             list->bs.DataOffset = 0;
             list->bs.DataLength = 0;
-            return 0;
+            break;
         }
     }
-
-    return AVERROR_BUG;
 }
 
 static void free_bitstream_list(QSVEncContext *q)
@@ -620,8 +618,10 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
         if (!(tmp = av_frame_clone(frame)))
             return AVERROR(ENOMEM);
 
-        if ((ret = put_frame(q, tmp)) < 0)
+        if ((ret = put_frame(q, tmp)) < 0) {
+            av_frame_free(&tmp);
             return ret;
+        }
 
         ret = MFX_ERR_MORE_DATA;
     } else {
@@ -635,11 +635,15 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
             if (q->pending) {
                 tmp = get_frame(q);
 
-                if ((ret = align_frame(avctx, tmp)) < 0)
+                if ((ret = align_frame(avctx, tmp)) < 0) {
+                    av_frame_free(&tmp);
                     return ret;
+                }
 
-                if (!(surf = get_surface(q)))
+                if (!(surf = get_surface(q))) {
+                    av_frame_free(&tmp);
                     return AVERROR(ENOMEM);
+                }
 
                 set_surface_param(q, surf, tmp);
             } else {
@@ -665,9 +669,15 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
         }
     } while (ret == MFX_ERR_MORE_DATA || ret == MFX_WRN_DEVICE_BUSY);
 
+    ret = ret == MFX_ERR_MORE_DATA ? 0 : ff_qsv_error(ret);
+
     if (sync) {
         ret = MFXVideoCORE_SyncOperation(q->session, sync, SYNC_TIME_DEFAULT);
         av_log(avctx, AV_LOG_DEBUG, "MFXVideoCORE_SyncOperation():%d\n", ret);
+        if ((ret = ff_qsv_error(ret)) < 0)
+            return ret;
+
+        print_frametype(avctx, q, bs, 6);
 
         if (bs->FrameType & MFX_FRAMETYPE_REF ||
             bs->FrameType & MFX_FRAMETYPE_xREF) {
@@ -677,10 +687,10 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
             fill_encoded_data_dts(q, dts);
         }
 
-        if ((ret = put_encoded_data(q, bs, dts)) < 0)
+        if ((ret = put_encoded_data(q, bs, dts)) < 0) {
+            release_bitstream(q, bs);
             return ret;
-
-        print_frametype(avctx, q, bs, 6);
+        }
     }
 
     if (q->edlist_head && q->edlist_head->dts != AV_NOPTS_VALUE) {
@@ -688,8 +698,10 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
 
         print_frametype(avctx, q, bs, 12);
 
-        if ((ret = ff_alloc_packet(pkt, bs->DataLength)) < 0)
+        if ((ret = ff_alloc_packet(pkt, bs->DataLength)) < 0) {
+            release_bitstream(q, bs);
             return ret;
+        }
 
         pkt->dts  = dts;
         pkt->pts  = bs->TimeStamp;
@@ -703,13 +715,12 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
 
         memcpy(pkt->data, bs->Data + bs->DataOffset, bs->DataLength);
 
-        *got_packet = 1;
+        release_bitstream(q, bs);
 
-        if ((ret = release_bitstream(q, bs)) < 0)
-            return ret;
+        *got_packet = 1;
     }
 
-    return 0;
+    return ret;
 }
 
 int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
