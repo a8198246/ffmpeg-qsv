@@ -453,6 +453,7 @@ static mfxBitstream *get_bitstream(QSVEncContext *q)
         return NULL;
     }
 
+    list->locked = 1;
     *next = list;
 
     return &list->bs;
