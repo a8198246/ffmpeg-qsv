@@ -557,9 +557,9 @@ static void fill_encoded_data_dts(QSVEncContext *q, int64_t base_dts)
 static void print_frametype(AVCodecContext *avctx, QSVEncContext *q,
                             mfxBitstream *bs, int indent)
 {
-    char buf[1024];
-
     if (av_log_get_level() >= AV_LOG_DEBUG) {
+        char buf[1024];
+
         buf[0] = '\0';
 
         snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf),
