@@ -195,26 +195,25 @@ static int bitstream_enqueue(mfxBitstream *bs, uint8_t *data, int size)
     return 0;
 }
 
-static void free_surface_list(QSVContext *q)
+static void free_surface_pool(QSVContext *q)
 {
-    QSVSurfaceList **next = &q->surflist;
-    QSVSurfaceList *list;
+    QSVDecBufferPool **next = &q->buf_pool;
+    QSVDecBufferPool *pool;
 
     while (*next) {
-        list = *next;
-        *next = list->next;
-        av_frame_free((AVFrame **)(&list->surface.Data.MemId));
-        av_freep(&list);
+        pool = *next;
+        *next = pool->next;
+        av_frame_free((AVFrame **)&pool->buf.surface.Data.MemId);
+        av_freep(&pool);
     }
 }
 
-static QSVSurfaceList *alloc_surface_list_entry(AVCodecContext *avctx, QSVContext *q)
+static QSVDecBufferPool *alloc_surface(AVCodecContext *avctx, QSVContext *q)
 {
-    QSVSurfaceList *list = NULL;
-    AVFrame *frame       = NULL;
-    int ret              = AVERROR(ENOMEM);
+    QSVDecBufferPool *pool = NULL;
+    AVFrame *frame         = NULL;
 
-    if (!(list = av_mallocz(sizeof(*list)))) {
+    if (!(pool = av_mallocz(sizeof(*pool)))) {
         av_log(avctx, AV_LOG_ERROR, "av_mallocz() failed\n");
         goto fail;
     }
@@ -222,46 +221,110 @@ static QSVSurfaceList *alloc_surface_list_entry(AVCodecContext *avctx, QSVContex
         av_log(avctx, AV_LOG_ERROR, "av_frame_alloc() failed\n");
         goto fail;
     }
-    if ((ret = ff_get_buffer(avctx, frame, 0)) < 0) {
+    if (ff_get_buffer(avctx, frame, 0) < 0) {
         av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
         goto fail;
     }
 
-    list->surface.Data.MemId = frame;
-    list->surface.Data.Y     = frame->data[0];
-    list->surface.Data.UV    = frame->data[1];
-    list->surface.Data.Pitch = frame->linesize[0];
-    list->surface.Info       = q->param.mfx.FrameInfo;
+    pool->buf.surface.Data.MemId = frame;
+    pool->buf.surface.Data.Y     = frame->data[0];
+    pool->buf.surface.Data.UV    = frame->data[1];
+    pool->buf.surface.Data.Pitch = frame->linesize[0];
+    pool->buf.surface.Info       = q->param.mfx.FrameInfo;
+
+    return pool;
 
 fail:
-    if (ret) {
-        av_freep(&list);
-        av_frame_free(&frame);
-    }
+    av_freep(&pool);
+    av_frame_free(&frame);
 
-    return list;
+    return NULL;
 }
 
 static mfxFrameSurface1 *get_surface(AVCodecContext *avctx, QSVContext *q)
 {
-    QSVSurfaceList **next = &q->surflist;
-    QSVSurfaceList *list;
+    QSVDecBufferPool **next = &q->buf_pool;
+    QSVDecBufferPool *pool;
+    AVFrame *frame;
 
     while (*next) {
-        list = *next;
-        next = &list->next;
-        if (!list->surface.Data.Locked)
-            return &list->surface;
+        pool = *next;
+        next = &pool->next;
+        if (!pool->buf.surface.Data.Locked && !pool->buf.sync) {
+            frame = pool->buf.surface.Data.MemId;
+            if (!frame->data[0]) {
+                if (ff_get_buffer(avctx, frame, 0) < 0) {
+                    av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
+                    return NULL;
+                }
+                pool->buf.surface.Data.Y     = frame->data[0];
+                pool->buf.surface.Data.UV    = frame->data[1];
+                pool->buf.surface.Data.Pitch = frame->linesize[1];
+                pool->buf.surface.Info       = q->param.mfx.FrameInfo;
+            }
+            return &pool->buf.surface;
+        }
     }
 
-    if (!(list = alloc_surface_list_entry(avctx, q))) {
-        av_log(avctx, AV_LOG_INFO, "No surfaces!\n");
+    if (!(pool = alloc_surface(avctx, q)))
         return NULL;
+
+    *next = pool;
+
+    return &pool->buf.surface;
+}
+
+static void release_surface(QSVContext *q, mfxFrameSurface1 *surf)
+{
+    QSVDecBufferPool *pool = q->buf_pool;
+
+    while (pool) {
+        if (&pool->buf.surface == surf) {
+            pool->buf.sync = 0;
+            break;
+        }
+        pool = pool->next;
     }
+}
 
-    *next = list;
+static void put_sync(QSVContext *q, mfxFrameSurface1 *surf, mfxSyncPoint sync)
+{
+    QSVDecBufferPool *pool = q->buf_pool;
 
-    return &list->surface;
+    while (pool) {
+        if (&pool->buf.surface == surf) {
+            QSVDecBuffer *buf = &pool->buf;
+
+            buf->sync = sync;
+
+            if (q->pending_sync_end)
+                q->pending_sync_end->next = buf;
+            else
+                q->pending_sync = buf;
+
+            q->pending_sync_end = buf;
+
+            q->nb_sync++;
+
+            break;
+        }
+        pool = pool->next;
+    }
+}
+
+static void get_sync(QSVContext *q, mfxFrameSurface1 **surf, mfxSyncPoint *sync)
+{
+    QSVDecBuffer *buf = q->pending_sync;
+
+    *surf = &buf->surface;
+    *sync = buf->sync;
+
+    q->pending_sync = buf->next;
+
+    if (!q->pending_sync)
+        q->pending_sync_end = NULL;
+
+    q->nb_sync--;
 }
 
 static int realloc_timestamps(QSVContext *q, int old_nmemb, int new_nmemb)
@@ -334,10 +397,10 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
 {
     mfxFrameSurface1 *insurf;
     mfxFrameSurface1 *outsurf;
-    mfxSyncPoint sync;
-    mfxBitstream *bs = &q->bs;
-    int size         = avpkt->size;
-    int busymsec     = 0;
+    mfxSyncPoint sync = 0;
+    mfxBitstream *bs  = &q->bs;
+    int size          = avpkt->size;
+    int busymsec      = 0;
     int ret;
 
     *got_frame = 0;
@@ -420,9 +483,13 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
     if (ret == MFX_ERR_MORE_DATA)
         ret = 0;
 
-    if (sync) {
+    if (sync)
+        put_sync(q, outsurf, sync);
+
+    if (q->pending_sync && !q->pending_sync->surface.Data.Locked &&
+        (q->nb_sync >= q->async_depth || !size)) {
         int64_t pts, dts;
-        AVFrame *workframe;
+        get_sync(q, &outsurf, &sync);
 
         MFXVideoCORE_SyncOperation(q->session, sync, 60000);
 
@@ -434,17 +501,7 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
                 return ret;
         }
 
-        workframe = outsurf->Data.MemId;
-        av_frame_move_ref(frame, workframe);
-        if ((ret = ff_get_buffer(avctx, workframe, 0)) < 0) {
-            av_log(avctx, AV_LOG_ERROR, "get_buffer() failed\n");
-            return ret;
-        }
-        outsurf->Data.Y  = workframe->data[0];
-        outsurf->Data.UV = workframe->data[1];
-
-        *got_frame = 1;
-        q->decoded_cnt++;
+        av_frame_move_ref(frame, outsurf->Data.MemId);
 
         frame->pkt_pts = frame->pts = pts;
         frame->pkt_dts = dts;
@@ -454,9 +511,14 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
             outsurf->Info.PicStruct & MFX_PICSTRUCT_FRAME_DOUBLING ? 2 :
             outsurf->Info.PicStruct & MFX_PICSTRUCT_FIELD_REPEATED ? 1 : 0;
         frame->top_field_first =
-            outsurf->Info.PicStruct & MFX_PICSTRUCT_FIELD_TFF;
+            !!(outsurf->Info.PicStruct & MFX_PICSTRUCT_FIELD_TFF);
         frame->interlaced_frame =
             !(outsurf->Info.PicStruct & MFX_PICSTRUCT_PROGRESSIVE);
+
+        release_surface(q, outsurf);
+
+        q->decoded_cnt++;
+        *got_frame = 1;
     }
 
     if (ret < 0)
@@ -474,7 +536,7 @@ int ff_qsv_flush(QSVContext *q)
 
     q->bs.DataOffset = q->bs.DataLength = 0;
 
-    free_surface_list(q);
+    free_surface_pool(q);
 
     reset_timestamps(q);
 
@@ -487,7 +549,7 @@ int ff_qsv_close(QSVContext *q)
 {
     int ret = MFXClose(q->session);
 
-    free_surface_list(q);
+    free_surface_pool(q);
 
     av_freep(&q->timestamps);
 
@@ -502,7 +564,7 @@ int ff_qsv_reinit(AVCodecContext *avctx, QSVContext *q)
 
     MFXClose(q->session);
 
-    free_surface_list(q);
+    free_surface_pool(q);
 
     av_freep(&q->timestamps);
 

@@ -35,6 +35,11 @@ typedef struct QSVFrameList {
     struct QSVFrameList *next;
 } QSVFrameList;
 
+typedef struct QSVSurfaceList {
+    mfxFrameSurface1 surface;
+    struct QSVSurfaceList *next;
+} QSVSurfaceList;
+
 typedef struct QSVEncBuffer {
     uint8_t *data;
     mfxBitstream bs;

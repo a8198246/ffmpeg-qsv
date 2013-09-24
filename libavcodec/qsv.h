@@ -42,28 +42,35 @@ typedef struct QSVTimeStamp {
     int64_t dts;
 } QSVTimeStamp;
 
-typedef struct QSVSurfaceList {
+typedef struct QSVDecBuffer {
     mfxFrameSurface1 surface;
-    struct QSVSurfaceList *next;
-} QSVSurfaceList;
+    mfxSyncPoint sync;
+    struct QSVDecBuffer *next;
+} QSVDecBuffer;
+
+typedef struct QSVDecBufferPool {
+    QSVDecBuffer buf;
+    struct QSVDecBufferPool *next;
+} QSVDecBufferPool;
 
 typedef struct QSVContext {
     AVClass *class;
     mfxSession session;
     mfxVideoParam param;
-    QSVSurfaceList *surflist;
+    QSVDecBufferPool *buf_pool;
     QSVTimeStamp *timestamps;
     int nb_timestamps;
     int put_dts_cnt;
     int decoded_cnt;
     int ts_by_qsv;
-    mfxSyncPoint sync;
     mfxBitstream bs;
     int last_ret;
     int need_reinit;
     int async_depth;
     int timeout;
     AVPacketList *pending, *pending_end;
+    QSVDecBuffer *pending_sync, *pending_sync_end;
+    int nb_sync;
 } QSVContext;
 
 int ff_qsv_error(int mfx_err);
