@@ -408,13 +408,13 @@ static void set_surface_param(QSVEncContext *q, mfxFrameSurface1 *surf,
     surf->Data.TimeStamp = frame->pts;
 }
 
-static QSVBitstreamList *alloc_bitstream_list_entry(QSVEncContext *q)
+static QSVEncBufferPool *alloc_buffer(QSVEncContext *q)
 {
-    QSVBitstreamList *list = NULL;
+    QSVEncBufferPool *pool = NULL;
     uint8_t *data          = NULL;
     int size               = q->param.mfx.BufferSizeInKB * 1000;
 
-    if (!(list = av_mallocz(sizeof(*list)))) {
+    if (!(pool = av_mallocz(sizeof(*pool)))) {
         av_log(q, AV_LOG_ERROR, "av_mallocz() failed\n");
         goto fail;
     }
@@ -422,134 +422,113 @@ static QSVBitstreamList *alloc_bitstream_list_entry(QSVEncContext *q)
         av_log(q, AV_LOG_ERROR, "av_mallocz() failed\n");
         goto fail;
     }
-    list->bs.Data      = data;
-    list->bs.MaxLength = size;
 
-    return list;
+    pool->buf.bs.Data      = pool->buf.data = data;
+    pool->buf.bs.MaxLength = size;
+
+    return pool;
 
 fail:
-    av_freep(&list);
+    av_freep(&pool);
     av_freep(&data);
 
     return NULL;
 }
 
-static mfxBitstream *get_bitstream(QSVEncContext *q)
+static QSVEncBuffer *get_buffer(QSVEncContext *q)
 {
-    QSVBitstreamList **next = &q->bslist;
-    QSVBitstreamList *list;
+    QSVEncBufferPool **next = &q->buf_pool;
+    QSVEncBufferPool *pool;
 
     while (*next) {
-        list = *next;
-        next = &list->next;
-        if (!list->locked) {
-            list->locked = 1;
-            return &list->bs;
+        pool = *next;
+        next = &pool->next;
+        if (!pool->buf.sync) {
+            pool->buf.bs.DataOffset = 0;
+            pool->buf.bs.DataLength = 0;
+            pool->buf.prev = NULL;
+            pool->buf.next = NULL;
+            return &pool->buf;
         }
     }
 
-    if (!(list = alloc_bitstream_list_entry(q))) {
-        av_log(q, AV_LOG_ERROR, "No bitstream!\n");
+    if (!(pool = alloc_buffer(q)))
         return NULL;
-    }
 
-    list->locked = 1;
-    *next = list;
+    *next = pool;
 
-    return &list->bs;
+    return &pool->buf;
 }
 
-static void release_bitstream(QSVEncContext *q, mfxBitstream *bs)
+static void release_buffer(QSVEncContext *q, QSVEncBuffer *buf)
 {
-    QSVBitstreamList **next = &q->bslist;
-    QSVBitstreamList *list;
+    QSVEncBufferPool **next = &q->buf_pool;
+    QSVEncBufferPool *pool;
 
     while (*next) {
-        list = *next;
-        next = &list->next;
-        if (&list->bs == bs) {
-            list->locked = 0;
-            list->bs.DataOffset = 0;
-            list->bs.DataLength = 0;
+        pool = *next;
+        next = &pool->next;
+        if (&pool->buf == buf) {
+            pool->buf.sync = 0;
             break;
         }
     }
 }
 
-static void free_bitstream_list(QSVEncContext *q)
+static void free_buffer_pool(QSVEncContext *q)
 {
-    QSVBitstreamList **next = &q->bslist;
-    QSVBitstreamList *list;
+    QSVEncBufferPool **next = &q->buf_pool;
+    QSVEncBufferPool *pool;
 
     while (*next) {
-        list = *next;
-        *next = list->next;
-        av_freep(&list->bs.Data);
-        av_freep(&list);
+        pool = *next;
+        *next = pool->next;
+        av_freep(&pool->buf.data);
+        av_freep(&pool);
     }
 }
 
-static int put_encoded_data(QSVEncContext *q, mfxBitstream *bs, int64_t dts)
+static void enqueue_buffer(QSVEncContext *q, QSVEncBuffer **head,
+                           QSVEncBuffer **tail, int *nb, QSVEncBuffer *buf)
 {
-    QSVEncodedDataList *list = av_mallocz(sizeof(*list));
-    if (!list)
-        return AVERROR(ENOMEM);
+    buf->prev = *tail;
 
-    list->bs   = bs;
-    list->dts  = dts;
-    list->prev = q->edlist_tail;
-
-    if (q->edlist_tail)
-        q->edlist_tail->next = list;
+    if (*tail)
+        (*tail)->next = buf;
     else
-        q->edlist_head = list;
+        *head = buf;
 
-    q->edlist_tail = list;
+    *tail = buf;
 
-    return 0;
+    (*nb)++;
 }
 
-static void get_encoded_data(QSVEncContext *q, mfxBitstream **bs, int64_t *dts)
+static QSVEncBuffer *dequeue_buffer(QSVEncContext *q, QSVEncBuffer **head,
+                                    QSVEncBuffer **tail, int *nb)
 {
-    QSVEncodedDataList *list = q->edlist_head;
+    QSVEncBuffer *buf = *head;
 
-    *bs  = list->bs;
-    *dts = list->dts;
+    *head = (*head)->next;
 
-    q->edlist_head = list->next;
-
-    if (q->edlist_head)
-        q->edlist_head->prev = NULL;
+    if (*head)
+        (*head)->prev = NULL;
     else
-        q->edlist_tail = NULL;
+        *tail = NULL;
 
-    av_free(list);
+    (*nb)--;
+
+    return buf;
 }
 
-static void free_encoded_data_list(QSVEncContext *q)
+static void fill_buffer_dts(QSVEncContext *q, QSVEncBuffer *buf, int64_t base_dts)
 {
-    QSVEncodedDataList **next = &q->edlist_head;
-    QSVEncodedDataList *list;
+    QSVEncBuffer *prev = buf;
+    int64_t dts        = base_dts - q->pts_delay;
 
-    while (*next) {
-        list = *next;
-        *next = list->next;
-        av_freep(&list);
-    }
-}
-
-static void fill_encoded_data_dts(QSVEncContext *q, int64_t base_dts)
-{
-    QSVEncodedDataList *list = q->edlist_tail;
-    int cnt                  = 1;
-
-    while (list) {
-        if (list->dts == AV_NOPTS_VALUE)
-            list->dts = base_dts - (q->pts_delay * cnt);
-        else
-            break;
-        list = list->prev;
-        cnt++;
+    while (prev && prev->dts == AV_NOPTS_VALUE) {
+        prev->dts = dts;
+        prev = prev->prev;
+        dts -= q->pts_delay;
     }
 }
 
@@ -598,11 +577,9 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
                      AVPacket *pkt, const AVFrame *frame, int *got_packet)
 {
     mfxFrameSurface1 *surf = NULL;
-    mfxBitstream *bs       = NULL;
-    mfxSyncPoint sync      = 0;
+    QSVEncBuffer *buf      = NULL;
     int busymsec           = 0;
     int ret;
-    int64_t dts;
     AVFrame *tmp;
 
     *got_packet = 0;
@@ -651,9 +628,9 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
             }
         }
 
-        bs = get_bitstream(q);
+        buf = get_buffer(q);
 
-        ret = MFXVideoENCODE_EncodeFrameAsync(q->session, NULL, surf, bs, &sync);
+        ret = MFXVideoENCODE_EncodeFrameAsync(q->session, NULL, surf, &buf->bs, &buf->sync);
         av_log(avctx, AV_LOG_DEBUG, "MFXVideoENCODE_EncodeFrameAsync():%d\n", ret);
 
         if (ret == MFX_WRN_DEVICE_BUSY) {
@@ -671,51 +648,58 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
 
     ret = ret == MFX_ERR_MORE_DATA ? 0 : ff_qsv_error(ret);
 
-    if (sync) {
-        ret = MFXVideoCORE_SyncOperation(q->session, sync, SYNC_TIME_DEFAULT);
+    if (buf->sync)
+        enqueue_buffer(q, &q->pending_sync, &q->pending_sync_end,
+                       &q->nb_sync, buf);
+
+    if (q->pending_sync && (q->nb_sync >= q->async_depth || !frame)) {
+        buf = dequeue_buffer(q, &q->pending_sync, &q->pending_sync_end,
+                             &q->nb_sync);
+
+        ret = MFXVideoCORE_SyncOperation(q->session, buf->sync,
+                                         SYNC_TIME_DEFAULT);
         av_log(avctx, AV_LOG_DEBUG, "MFXVideoCORE_SyncOperation():%d\n", ret);
         if ((ret = ff_qsv_error(ret)) < 0)
             return ret;
 
-        print_frametype(avctx, q, bs, 6);
+        print_frametype(avctx, q, &buf->bs, 6);
 
-        if (bs->FrameType & MFX_FRAMETYPE_REF ||
-            bs->FrameType & MFX_FRAMETYPE_xREF) {
-            dts = AV_NOPTS_VALUE;
+        if (buf->bs.FrameType & MFX_FRAMETYPE_REF ||
+            buf->bs.FrameType & MFX_FRAMETYPE_xREF) {
+            buf->dts = AV_NOPTS_VALUE;
         } else {
-            dts = bs->TimeStamp;
-            fill_encoded_data_dts(q, dts);
+            buf->dts = buf->bs.TimeStamp;
+            fill_buffer_dts(q, q->pending_dts_end, buf->dts);
         }
 
-        if ((ret = put_encoded_data(q, bs, dts)) < 0) {
-            release_bitstream(q, bs);
-            return ret;
-        }
+        enqueue_buffer(q, &q->pending_dts, &q->pending_dts_end,
+                       &q->nb_dts, buf);
     }
 
-    if (q->edlist_head && q->edlist_head->dts != AV_NOPTS_VALUE) {
-        get_encoded_data(q, &bs, &dts);
+    if (q->pending_dts && q->pending_dts->dts != AV_NOPTS_VALUE) {
+        buf = dequeue_buffer(q, &q->pending_dts, &q->pending_dts_end,
+                             &q->nb_dts);
 
-        print_frametype(avctx, q, bs, 12);
+        print_frametype(avctx, q, &buf->bs, 12);
 
-        if ((ret = ff_alloc_packet(pkt, bs->DataLength)) < 0) {
-            release_bitstream(q, bs);
+        if ((ret = ff_alloc_packet(pkt, buf->bs.DataLength)) < 0) {
+            release_buffer(q, buf);
             return ret;
         }
 
-        pkt->dts  = dts;
-        pkt->pts  = bs->TimeStamp;
-        pkt->size = bs->DataLength;
+        pkt->dts  = buf->dts;
+        pkt->pts  = buf->bs.TimeStamp;
+        pkt->size = buf->bs.DataLength;
 
-        if (bs->FrameType & MFX_FRAMETYPE_I ||
-            bs->FrameType & MFX_FRAMETYPE_xI ||
-            bs->FrameType & MFX_FRAMETYPE_IDR ||
-            bs->FrameType & MFX_FRAMETYPE_xIDR)
+        if (buf->bs.FrameType & MFX_FRAMETYPE_I ||
+            buf->bs.FrameType & MFX_FRAMETYPE_xI ||
+            buf->bs.FrameType & MFX_FRAMETYPE_IDR ||
+            buf->bs.FrameType & MFX_FRAMETYPE_xIDR)
             pkt->flags |= AV_PKT_FLAG_KEY;
 
-        memcpy(pkt->data, bs->Data + bs->DataOffset, bs->DataLength);
+        memcpy(pkt->data, buf->bs.Data + buf->bs.DataOffset, buf->bs.DataLength);
 
-        release_bitstream(q, bs);
+        release_buffer(q, buf);
 
         *got_packet = 1;
     }
@@ -731,17 +715,14 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
     MFXClose(q->session);
     av_log(avctx, AV_LOG_DEBUG, "MFXClose()\n");
 
+    free_frame_list(q);
+    av_log(avctx, AV_LOG_DEBUG, "free_frame_list()\n");
+
     free_surface_list(q);
     av_log(avctx, AV_LOG_DEBUG, "free_surface_list()\n");
 
-    free_bitstream_list(q);
-    av_log(avctx, AV_LOG_DEBUG, "free_bitstream_list()\n");
-
-    free_encoded_data_list(q);
-    av_log(avctx, AV_LOG_DEBUG, "free_encoded_data_list()\n");
-
-    free_frame_list(q);
-    av_log(avctx, AV_LOG_DEBUG, "free_frame_list()\n");
+    free_buffer_pool(q);
+    av_log(avctx, AV_LOG_DEBUG, "free_buffer_pool()\n");
 
     return 0;
 }

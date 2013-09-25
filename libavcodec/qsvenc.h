@@ -35,18 +35,19 @@ typedef struct QSVFrameList {
     struct QSVFrameList *next;
 } QSVFrameList;
 
-typedef struct QSVBitstreamList {
+typedef struct QSVEncBuffer {
+    uint8_t *data;
     mfxBitstream bs;
-    int locked;
-    struct QSVBitstreamList *next;
-} QSVBitstreamList;
-
-typedef struct QSVEncodedDataList {
-    mfxBitstream *bs;
+    mfxSyncPoint sync;
     int64_t dts;
-    struct QSVEncodedDataList *prev;
-    struct QSVEncodedDataList *next;
-} QSVEncodedDataList;
+    struct QSVEncBuffer *prev;
+    struct QSVEncBuffer *next;
+} QSVEncBuffer;
+
+typedef struct QSVEncBufferPool {
+    QSVEncBuffer buf;
+    struct QSVEncBufferPool *next;
+} QSVEncBufferPool;
 
 typedef struct QSVEncContext {
     AVClass *class;
@@ -63,8 +64,11 @@ typedef struct QSVEncContext {
     int timeout;
     QSVFrameList *pending, *pending_end;
     QSVSurfaceList *surflist;
-    QSVBitstreamList *bslist;
-    QSVEncodedDataList *edlist_head, *edlist_tail;
+    QSVEncBufferPool *buf_pool;
+    QSVEncBuffer *pending_sync, *pending_sync_end;
+    int nb_sync;
+    QSVEncBuffer *pending_dts, *pending_dts_end;
+    int nb_dts;
 } QSVEncContext;
 
 int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q);
