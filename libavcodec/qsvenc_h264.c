@@ -67,7 +67,6 @@ static const AVOption options[] = {
     { "unknown" , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_UNKNOWN      }, INT_MIN, INT_MAX, VE, "profile" },
     { "baseline", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_AVC_BASELINE }, INT_MIN, INT_MAX, VE, "profile" },
     { "main"    , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_AVC_MAIN     }, INT_MIN, INT_MAX, VE, "profile" },
-    { "extended", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_AVC_EXTENDED }, INT_MIN, INT_MAX, VE, "profile" },
     { "high"    , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_AVC_HIGH     }, INT_MIN, INT_MAX, VE, "profile" },
     { "level", NULL, OFFSET(qsv.level), AV_OPT_TYPE_INT, { .i64 = MFX_LEVEL_UNKNOWN }, 0, INT_MAX, VE, "level" },
     { "unknown", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_LEVEL_UNKNOWN }, INT_MIN, INT_MAX, VE, "level" },
