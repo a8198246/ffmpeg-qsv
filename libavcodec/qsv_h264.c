@@ -79,12 +79,13 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
 {
     QSVH264Context *q = avctx->priv_data;
     AVFrame *frame    = data;
-    uint8_t *p;
-    int size;
+    uint8_t *p        = NULL;
+    int size          = 0;
     int ret;
 
     // Reinit so finished flushing old video parameter cached frames
-    if (q->qsv.need_reinit && q->qsv.last_ret == MFX_ERR_MORE_DATA)
+    if (q->qsv.need_reinit && q->qsv.last_ret == MFX_ERR_MORE_DATA &&
+        !q->qsv.nb_sync)
         if ((ret = ff_qsv_reinit(avctx, &q->qsv)) < 0)
             return ret;
 
@@ -92,7 +93,7 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
                                &p, &size,
                                avpkt->data, avpkt->size, 0);
 
-    if (p != avpkt->data) {
+    if (size && p && p != avpkt->data) {
         AVPacket pkt = { 0 };
 
         av_packet_copy_props(&pkt, avpkt);

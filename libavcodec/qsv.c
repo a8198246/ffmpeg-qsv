@@ -487,7 +487,7 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
         put_sync(q, outsurf, sync);
 
     if (q->pending_sync && !q->pending_sync->surface.Data.Locked &&
-        (q->nb_sync >= q->async_depth || !size)) {
+        (q->nb_sync >= q->async_depth || !size || q->need_reinit)) {
         int64_t pts, dts;
         get_sync(q, &outsurf, &sync);
 
