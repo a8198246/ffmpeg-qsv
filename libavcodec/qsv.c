@@ -134,7 +134,7 @@ int ff_qsv_init(AVCodecContext *c, QSVContext *q)
     if (!q->need_reinit)
         bs->DataLength = bs->DataOffset = 0;
 
-    bs->DataFlag = MFX_BITSTREAM_COMPLETE_FRAME;
+    //bs->DataFlag = MFX_BITSTREAM_COMPLETE_FRAME; // can't decode PAFF
 
     ret = MFXVideoDECODE_QueryIOSurf(q->session, &q->param, &req);
     if (ret < 0)
