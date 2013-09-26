@@ -42,8 +42,8 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
     if ((ret = ff_qsv_codec_id_to_mfx(avctx->codec_id)) < 0)
         return ret;
     q->param.mfx.CodecId            = ret;
-  //q->param.mfx.CodecProfile       = 0;
-  //q->param.mfx.CodecLevel         = 0;
+    q->param.mfx.CodecProfile       = q->profile;
+    q->param.mfx.CodecLevel         = q->level;
     q->param.mfx.TargetUsage        = MFX_TARGETUSAGE_BALANCED;
     q->param.mfx.GopPicSize         = avctx->gop_size < 0 ? 0 : avctx->gop_size;
     q->param.mfx.GopRefDist         = av_clip(avctx->max_b_frames, -1, 16) + 1;

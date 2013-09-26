@@ -67,6 +67,8 @@ typedef struct QSVEncContext {
     int64_t pts_delay;
     int async_depth;
     int timeout;
+    int profile;
+    int level;
     QSVFrameList *pending, *pending_end;
     QSVSurfaceList *surflist;
     QSVEncBufferPool *buf_pool;
