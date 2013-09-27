@@ -140,10 +140,13 @@ int ff_qsv_init(AVCodecContext *c, QSVContext *q)
     if (ret < 0)
         return ff_qsv_error(ret);
 
-    q->nb_timestamps = req.NumFrameSuggested + q->param.AsyncDepth;
-    q->put_dts_cnt   = 0;
-    q->decoded_cnt   = 0;
-    q->last_ret      = MFX_ERR_MORE_DATA;
+    q->nb_timestamps    = req.NumFrameSuggested + q->param.AsyncDepth;
+    q->put_dts_cnt      = 0;
+    q->decoded_cnt      = 0;
+    q->last_ret         = MFX_ERR_MORE_DATA;
+    q->pending_sync     = NULL;
+    q->pending_sync_end = NULL;
+    q->nb_sync          = 0;
 
     if (!(q->timestamps = av_mallocz_array(q->nb_timestamps, sizeof(*q->timestamps))))
         return AVERROR(ENOMEM);
