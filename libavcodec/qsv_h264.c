@@ -110,7 +110,7 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
     return ret;
 }
 
-static int qsv_dec_close (AVCodecContext *avctx)
+static int qsv_dec_close(AVCodecContext *avctx)
 {
     QSVH264Context *q = avctx->priv_data;
     int ret = ff_qsv_close(&q->qsv);

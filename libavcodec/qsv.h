@@ -46,29 +46,26 @@ typedef struct QSVDecBuffer {
     mfxFrameSurface1 surface;
     mfxSyncPoint sync;
     struct QSVDecBuffer *next;
+    struct QSVDecBuffer *pool;
 } QSVDecBuffer;
-
-typedef struct QSVDecBufferPool {
-    QSVDecBuffer buf;
-    struct QSVDecBufferPool *next;
-} QSVDecBufferPool;
 
 typedef struct QSVContext {
     AVClass *class;
     mfxSession session;
     mfxVideoParam param;
-    QSVDecBufferPool *buf_pool;
-    QSVTimeStamp *timestamps;
-    int nb_timestamps;
+    mfxFrameAllocRequest req;
+    mfxBitstream bs;
+    QSVTimeStamp *ts;
+    int nb_ts;
     int put_dts_cnt;
     int decoded_cnt;
     int ts_by_qsv;
-    mfxBitstream bs;
     int last_ret;
     int need_reinit;
     int async_depth;
     int timeout;
-    AVPacketList *pending, *pending_end;
+    AVPacketList *pending_dec, *pending_dec_end;
+    QSVDecBuffer *buf_pool;
     QSVDecBuffer *pending_sync, *pending_sync_end;
     int nb_sync;
 } QSVContext;

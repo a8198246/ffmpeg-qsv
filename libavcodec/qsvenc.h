@@ -30,15 +30,12 @@
 #include "libavutil/avutil.h"
 
 
-typedef struct QSVFrameList {
-    AVFrame *frame;
-    struct QSVFrameList *next;
-} QSVFrameList;
-
-typedef struct QSVSurfaceList {
+typedef struct QSVEncSurfaceList {
     mfxFrameSurface1 surface;
-    struct QSVSurfaceList *next;
-} QSVSurfaceList;
+    struct QSVEncSurfaceList *prev;
+    struct QSVEncSurfaceList *next;
+    struct QSVEncSurfaceList *pool;
+} QSVEncSurfaceList;
 
 typedef struct QSVEncBuffer {
     uint8_t *data;
@@ -47,17 +44,14 @@ typedef struct QSVEncBuffer {
     int64_t dts;
     struct QSVEncBuffer *prev;
     struct QSVEncBuffer *next;
+    struct QSVEncBuffer *pool;
 } QSVEncBuffer;
-
-typedef struct QSVEncBufferPool {
-    QSVEncBuffer buf;
-    struct QSVEncBufferPool *next;
-} QSVEncBufferPool;
 
 typedef struct QSVEncContext {
     AVClass *class;
     mfxSession session;
     mfxVideoParam param;
+    mfxFrameAllocRequest req;
     mfxExtCodingOption extco;
     mfxExtCodingOption2 extco2;
     mfxExtCodingOptionSPSPPS extcospspps;
@@ -73,13 +67,13 @@ typedef struct QSVEncContext {
     int idr_interval;
     int profile;
     int level;
-    QSVFrameList *pending, *pending_end;
-    QSVSurfaceList *surflist;
-    QSVEncBufferPool *buf_pool;
+    int open_gop;
+    QSVEncSurfaceList *surf_pool;
+    QSVEncSurfaceList *pending_enc, *pending_enc_end;
+    QSVEncBuffer *buf_pool;
     QSVEncBuffer *pending_sync, *pending_sync_end;
     int nb_sync;
     QSVEncBuffer *pending_dts, *pending_dts_end;
-    int nb_dts;
 } QSVEncContext;
 
 int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q);
