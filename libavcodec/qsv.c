@@ -117,13 +117,15 @@ int ff_qsv_init(AVCodecContext *avctx, QSVContext *q)
     if ((ret = MFXVideoDECODE_DecodeHeader(q->session, bs, &q->param)) < 0)
         return ff_qsv_error(ret);
 
-    avctx->width         = q->param.mfx.FrameInfo.CropW;
-    avctx->height        = q->param.mfx.FrameInfo.CropH;
-    avctx->coded_width   = q->param.mfx.FrameInfo.Width;
-    avctx->coded_height  = q->param.mfx.FrameInfo.Height;
-    avctx->time_base.den = q->param.mfx.FrameInfo.FrameRateExtN;
-    avctx->time_base.num = q->param.mfx.FrameInfo.FrameRateExtD /
-                           avctx->ticks_per_frame;
+    avctx->width                   = q->param.mfx.FrameInfo.CropW;
+    avctx->height                  = q->param.mfx.FrameInfo.CropH;
+    avctx->coded_width             = q->param.mfx.FrameInfo.Width;
+    avctx->coded_height            = q->param.mfx.FrameInfo.Height;
+    avctx->time_base.den           = q->param.mfx.FrameInfo.FrameRateExtN;
+    avctx->time_base.num           = q->param.mfx.FrameInfo.FrameRateExtD /
+                                     avctx->ticks_per_frame;
+    avctx->sample_aspect_ratio.num = q->param.mfx.FrameInfo.AspectRatioW;
+    avctx->sample_aspect_ratio.den = q->param.mfx.FrameInfo.AspectRatioH;
 
     if (!q->need_reinit)
         bs->DataLength = bs->DataOffset = 0;
@@ -502,6 +504,9 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
             !!(outsurf->Info.PicStruct & MFX_PICSTRUCT_FIELD_TFF);
         frame->interlaced_frame =
             !(outsurf->Info.PicStruct & MFX_PICSTRUCT_PROGRESSIVE);
+
+        frame->sample_aspect_ratio.num = outsurf->Info.AspectRatioW;
+        frame->sample_aspect_ratio.den = outsurf->Info.AspectRatioH;
 
         release_surface(q, outsurf);
 
