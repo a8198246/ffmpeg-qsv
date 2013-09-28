@@ -47,18 +47,21 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
     q->param.mfx.TargetUsage        = MFX_TARGETUSAGE_BALANCED;
     q->param.mfx.GopPicSize         = avctx->gop_size < 0 ? 0 : avctx->gop_size;
     q->param.mfx.GopRefDist         = av_clip(avctx->max_b_frames, -1, 16) + 1;
-    q->param.mfx.GopOptFlag         = MFX_GOP_CLOSED; // 0:open-gop
-    q->param.mfx.IdrInterval        = 0;
+    q->param.mfx.GopOptFlag         = avctx->flags & CODEC_FLAG_CLOSED_GOP ?
+                                      MFX_GOP_CLOSED :
+                                      0;
+    q->param.mfx.IdrInterval        = q->idr_interval;
     q->param.mfx.NumSlice           = avctx->slices;
     q->param.mfx.NumRefFrame        = avctx->refs < 0 ? 0 : avctx->refs;
     q->param.mfx.EncodedOrder       = 0;
-    q->param.mfx.BufferSizeInKB     = 0; // MaxKbps/8;
+    q->param.mfx.BufferSizeInKB     = 0;
   //q->param.mfx.TimeStampCalc      = 0; // API 1.3
   //q->param.mfx.ExtendedPicStruct  = 0; // API 1.3
   //q->param.mfx.BRCParamMultiplier = 0; // API 1.3
   //q->param.mfx.SliceGroupsPresent = 0; // API 1.6
     q->param.mfx.RateControlMethod = 
-        avctx->flags & CODEC_FLAG_QSCALE ?      MFX_RATECONTROL_CQP :
+        (q->qpi >= 0 && q->qpp >= 0 && q->qpb >= 0) ||
+        avctx->flags & CODEC_FLAG_QSCALE      ? MFX_RATECONTROL_CQP :
         avctx->rc_max_rate &&
         avctx->rc_max_rate == avctx->bit_rate ? MFX_RATECONTROL_CBR :
                                                 MFX_RATECONTROL_VBR;
@@ -95,20 +98,32 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
         break;
     case MFX_RATECONTROL_CQP: // API 1.1
         av_log(avctx, AV_LOG_INFO, "RateControlMethod:CQP\n");
-        quant = avctx->global_quality / FF_QP2LAMBDA;
-        if (avctx->i_quant_factor)
-            quant *= fabs(avctx->i_quant_factor);
-        quant += avctx->i_quant_offset;
-        q->param.mfx.QPI = av_clip(quant, 0, 51);
+        if (q->qpi >= 0) {
+            q->param.mfx.QPI = q->qpi;
+        } else {
+            quant = avctx->global_quality / FF_QP2LAMBDA;
+            if (avctx->i_quant_factor)
+                quant *= fabs(avctx->i_quant_factor);
+            quant += avctx->i_quant_offset;
+            q->param.mfx.QPI = av_clip(quant, 0, 51);
+        }
 
-        quant = avctx->global_quality / FF_QP2LAMBDA;
-        q->param.mfx.QPP = av_clip(quant, 0, 51);
+        if (q->qpp >= 0) {
+            q->param.mfx.QPP = q->qpp;
+        } else {
+            quant = avctx->global_quality / FF_QP2LAMBDA;
+            q->param.mfx.QPP = av_clip(quant, 0, 51);
+        }
 
-        quant = avctx->global_quality / FF_QP2LAMBDA;
-        if (avctx->b_quant_factor)
-            quant *= fabs(avctx->b_quant_factor);
-        quant += avctx->b_quant_offset;
-        q->param.mfx.QPB = av_clip(quant, 0, 51);
+        if (q->qpb >= 0) {
+            q->param.mfx.QPB = q->qpb;
+        } else {
+            quant = avctx->global_quality / FF_QP2LAMBDA;
+            if (avctx->b_quant_factor)
+                quant *= fabs(avctx->b_quant_factor);
+            quant += avctx->b_quant_offset;
+            q->param.mfx.QPB = av_clip(quant, 0, 51);
+        }
 
         av_log(avctx, AV_LOG_INFO, "QPI:%d, QPP:%d, QPB:%d\n",
                q->param.mfx.QPI, q->param.mfx.QPP, q->param.mfx.QPB);

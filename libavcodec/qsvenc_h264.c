@@ -63,6 +63,10 @@ static av_cold int qsv_enc_close(AVCodecContext *avctx)
 static const AVOption options[] = {
     { "async_depth", "Number which limits internal frame buffering", OFFSET(qsv.async_depth), AV_OPT_TYPE_INT, { .i64 = ASYNC_DEPTH_DEFAULT }, 0, INT_MAX, VE },
     { "timeout", "Maximum timeout in milliseconds when the device has been busy", OFFSET(qsv.timeout), AV_OPT_TYPE_INT, { .i64 = TIMEOUT_DEFAULT }, 0, INT_MAX, VE },
+    { "qpi", NULL, OFFSET(qsv.qpi), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 51, VE },
+    { "qpp", NULL, OFFSET(qsv.qpp), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 51, VE },
+    { "qpb", NULL, OFFSET(qsv.qpb), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 51, VE },
+    { "idr_interval", NULL, OFFSET(qsv.idr_interval), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, INT_MAX, VE },
     { "profile", NULL, OFFSET(qsv.profile), AV_OPT_TYPE_INT, { .i64 = MFX_PROFILE_UNKNOWN }, 0, INT_MAX, VE, "profile" },
     { "unknown" , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_UNKNOWN      }, INT_MIN, INT_MAX, VE, "profile" },
     { "baseline", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_AVC_BASELINE }, INT_MIN, INT_MAX, VE, "profile" },
@@ -103,9 +107,11 @@ static const AVCodecDefault qsv_enc_defaults[] = {
     { "b_qfactor", "1.04" },
     { "b_qoffset", "1.0" },
     { "coder",     "-1" },
+    { "b",         "0" },
     { "g",         "-1" },
     { "bf",        "-1" },
     { "refs",      "-1" },
+    { "flags",     "+cgop" },
     { NULL },
 };
 
