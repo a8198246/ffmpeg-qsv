@@ -488,7 +488,7 @@ int ff_qsv_decode(AVCodecContext *avctx, QSVContext *q,
         if (q->ts_by_qsv)
             dts = pts;
         else
-            if ((ret = get_dts(q, outsurf->Data.TimeStamp, &dts)) < 0)
+            if ((ret = get_dts(q, pts, &dts)) < 0)
                 return ret;
 
         av_frame_move_ref(frame, outsurf->Data.MemId);
