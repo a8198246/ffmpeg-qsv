@@ -136,7 +136,7 @@ static const AVOption options[] = {
 };
 
 static const AVClass class = {
-    .class_name = "h264_qsv",
+    .class_name = "h264_qsv decoder",
     .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
