@@ -29,18 +29,19 @@
 #include "internal.h"
 #include "mpegvideo.h"
 #include "qsv.h"
+#include "qsvdec.h"
 
-typedef struct QSVMpegContext {
+typedef struct QSVDecMpegContext {
     AVClass *class;
-    QSVContext qsv;
-} QSVMpegContext;
+    QSVDecContext qsv;
+} QSVDecMpegContext;
 
 static const uint8_t fake_ipic[] = { 0x00, 0x00, 0x01, 0x00, 0x00, 0x0F, 0xFF, 0xF8 };
 
 static av_cold int qsv_dec_init(AVCodecContext *avctx)
 {
-    QSVMpegContext *q = avctx->priv_data;
-    mfxBitstream *bs  = &q->qsv.bs;
+    QSVDecMpegContext *q = avctx->priv_data;
+    mfxBitstream *bs     = &q->qsv.bs;
     int ret;
 
     avctx->pix_fmt = AV_PIX_FMT_NV12;
@@ -58,7 +59,7 @@ static av_cold int qsv_dec_init(AVCodecContext *avctx)
 
     bs->MaxLength = bs->DataLength;
 
-    ret = ff_qsv_init(avctx, &q->qsv);
+    ret = ff_qsv_dec_init(avctx, &q->qsv);
     if (ret < 0)
         av_freep(&bs->Data);
 
@@ -68,22 +69,22 @@ static av_cold int qsv_dec_init(AVCodecContext *avctx)
 static int qsv_dec_frame(AVCodecContext *avctx, void *data,
                          int *got_frame, AVPacket *avpkt)
 {
-    QSVMpegContext *q = avctx->priv_data;
-    AVFrame *frame    = data;
+    QSVDecMpegContext *q = avctx->priv_data;
+    AVFrame *frame       = data;
     int ret;
 
     // Reinit so finished flushing old video parameter cached frames
     if (q->qsv.need_reinit && q->qsv.last_ret == MFX_ERR_MORE_DATA)
-        if ((ret = ff_qsv_reinit(avctx, &q->qsv)) < 0)
+        if ((ret = ff_qsv_dec_reinit(avctx, &q->qsv)) < 0)
             return ret;
 
-    return ff_qsv_decode(avctx, &q->qsv, frame, got_frame, avpkt);
+    return ff_qsv_dec_frame(avctx, &q->qsv, frame, got_frame, avpkt);
 }
 
 static int qsv_dec_close(AVCodecContext *avctx)
 {
-    QSVMpegContext *q = avctx->priv_data;
-    int ret = ff_qsv_close(&q->qsv);
+    QSVDecMpegContext *q = avctx->priv_data;
+    int ret              = ff_qsv_dec_close(&q->qsv);
 
     av_freep(&q->qsv.bs.Data);
     return ret;
@@ -91,12 +92,12 @@ static int qsv_dec_close(AVCodecContext *avctx)
 
 static void qsv_dec_flush(AVCodecContext *avctx)
 {
-    QSVMpegContext *q = avctx->priv_data;
+    QSVDecMpegContext *q = avctx->priv_data;
 
-    ff_qsv_flush(&q->qsv);
+    ff_qsv_dec_flush(&q->qsv);
 }
 
-#define OFFSET(x) offsetof(QSVMpegContext, x)
+#define OFFSET(x) offsetof(QSVDecMpegContext, x)
 #define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
 static const AVOption options[] = {
     { "async_depth", "Number which limits internal frame buffering", OFFSET(qsv.async_depth), AV_OPT_TYPE_INT, { .i64 = ASYNC_DEPTH_DEFAULT }, 0, INT_MAX, VD },
@@ -114,7 +115,7 @@ static const AVClass class = {
 AVCodec ff_mpeg2_qsv_decoder = {
     .name           = "mpeg2_qsv",
     .long_name      = NULL_IF_CONFIG_SMALL("MPEG-2 video (Intel Quick Sync Video acceleration)"),
-    .priv_data_size = sizeof(QSVMpegContext),
+    .priv_data_size = sizeof(QSVDecMpegContext),
     .type           = AVMEDIA_TYPE_VIDEO,
     .id             = AV_CODEC_ID_MPEG2VIDEO,
     .init           = qsv_dec_init,

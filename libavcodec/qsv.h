@@ -37,53 +37,8 @@
 #define TIMEOUT_DEFAULT 5 * 1000    // 5s
 
 
-typedef struct QSVTimeStamp {
-    int64_t pts;
-    int64_t dts;
-} QSVTimeStamp;
-
-typedef struct QSVDecBuffer {
-    mfxFrameSurface1 surface;
-    mfxSyncPoint sync;
-    struct QSVDecBuffer *next;
-    struct QSVDecBuffer *pool;
-} QSVDecBuffer;
-
-typedef struct QSVContext {
-    AVClass *class;
-    mfxSession session;
-    mfxVideoParam param;
-    mfxFrameAllocRequest req;
-    mfxBitstream bs;
-    QSVTimeStamp *ts;
-    int nb_ts;
-    int put_dts_cnt;
-    int decoded_cnt;
-    int ts_by_qsv;
-    int last_ret;
-    int need_reinit;
-    int async_depth;
-    int timeout;
-    AVPacketList *pending_dec, *pending_dec_end;
-    QSVDecBuffer *buf_pool;
-    QSVDecBuffer *pending_sync, *pending_sync_end;
-    int nb_sync;
-} QSVContext;
-
 int ff_qsv_error(int mfx_err);
 
 int ff_qsv_codec_id_to_mfx(enum AVCodecID codec_id);
-
-int ff_qsv_init(AVCodecContext *s, QSVContext *q);
-
-int ff_qsv_decode(AVCodecContext *s, QSVContext *q,
-                  AVFrame *frame, int *got_frame,
-                  AVPacket *avpkt);
-
-int ff_qsv_flush(QSVContext *q);
-
-int ff_qsv_close(QSVContext *q);
-
-int ff_qsv_reinit(AVCodecContext *s, QSVContext *q);
 
 #endif /* AVCODEC_QSV_H */
