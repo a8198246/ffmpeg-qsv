@@ -634,7 +634,8 @@ int ff_thread_decode_frame(AVCodecContext *avctx,
 
         av_frame_move_ref(picture, &p->frame);
         *got_picture_ptr = p->got_frame;
-        picture->pkt_dts = p->avpkt.dts;
+        if (!(avctx->codec->capabilities & CODEC_CAP_PKT_TS))
+            picture->pkt_dts = p->avpkt.dts;
 
         /*
          * A later call with avkpt->size == 0 may loop over all threads,

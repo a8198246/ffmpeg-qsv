@@ -28,6 +28,12 @@
 #include <mfx/mfxvideo.h>
 
 #include "libavutil/avutil.h"
+#include "thread.h"
+#if HAVE_PTHREADS
+#include <pthread.h>
+#elif HAVE_W32THREADS
+#include "compat/w32pthreads.h"
+#endif
 
 
 typedef struct QSVDecTimeStamp {
@@ -35,32 +41,57 @@ typedef struct QSVDecTimeStamp {
     int64_t dts;
 } QSVDecTimeStamp;
 
-typedef struct QSVDecBuffer {
+typedef struct QSVDecBitstreamList {
+    mfxBitstream bs;
+    AVPacket pkt;
+    struct QSVDecBitstreamList *next;
+    struct QSVDecBitstreamList *pool;
+} QSVDecBitstreamList;
+
+typedef struct QSVDecSurfaceList {
     mfxFrameSurface1 surface;
     mfxSyncPoint sync;
-    struct QSVDecBuffer *next;
-    struct QSVDecBuffer *pool;
-} QSVDecBuffer;
+    struct QSVDecSurfaceList *next;
+    struct QSVDecSurfaceList *pool;
+} QSVDecSurfaceList;
+
+typedef struct QSVDecOptions {
+    int async_depth;
+    int timeout;
+} QSVDecOptions;
 
 typedef struct QSVDecContext {
     AVClass *class;
     mfxSession session;
     mfxVideoParam param;
     mfxFrameAllocRequest req;
-    mfxBitstream bs;
-    QSVDecTimeStamp *ts;
-    int nb_ts;
-    int put_dts_cnt;
-    int decoded_cnt;
+    mfxBitstream *bs;
+    QSVDecOptions options;
+    int ts_cnt;
     int ts_by_qsv;
     int last_ret;
     int need_reinit;
-    int async_depth;
-    int timeout;
-    AVPacketList *pending_dec, *pending_dec_end;
-    QSVDecBuffer *buf_pool;
-    QSVDecBuffer *pending_sync, *pending_sync_end;
+    QSVDecTimeStamp *ts;
+    int nb_ts;
+    QSVDecBitstreamList *bs_pool;
+    QSVDecBitstreamList *pending_dec, *pending_dec_end;
+    QSVDecSurfaceList *surf_pool;
+    QSVDecSurfaceList *pending_sync, *pending_sync_end;
     int nb_sync;
+    pthread_mutex_t pkt_mutex;
+    pthread_mutex_t ts_mutex;
+    pthread_mutex_t bs_mutex;
+    pthread_mutex_t decode_mutex;
+    pthread_mutex_t sync_mutex;
+    pthread_mutex_t mfx_mutex;
+    pthread_mutex_t exit_mutex;
+    pthread_cond_t decode_cond;
+    pthread_cond_t sync_cond;
+    pthread_cond_t exit_cond;
+    int pkt_cnt;
+    int decode_cnt;
+    int sync_cnt;
+    int exit_cnt;
 } QSVDecContext;
 
 int ff_qsv_dec_init(AVCodecContext *s, QSVDecContext *q);
