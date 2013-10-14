@@ -33,14 +33,20 @@
 
 typedef struct QSVMPEGEncContext {
     AVClass *class;
-    QSVEncContext qsv;
+    QSVEncOptions options;
+    QSVEncContext *qsv;
 } QSVMPEGEncContext;
 
 static av_cold int qsv_enc_init(AVCodecContext *avctx)
 {
     QSVMPEGEncContext *q = avctx->priv_data;
 
-    return ff_qsv_enc_init(avctx, &q->qsv);
+    if (!(q->qsv = av_mallocz(sizeof(*q->qsv))))
+        return AVERROR(ENOMEM);
+
+    q->qsv->options = q->options;
+
+    return ff_qsv_enc_init(avctx, q->qsv);
 }
 
 static int qsv_enc_frame(AVCodecContext *avctx, AVPacket *pkt,
@@ -48,30 +54,36 @@ static int qsv_enc_frame(AVCodecContext *avctx, AVPacket *pkt,
 {
     QSVMPEGEncContext *q = avctx->priv_data;
 
-    return ff_qsv_enc_frame(avctx, &q->qsv, pkt, frame, got_packet);
+    return ff_qsv_enc_frame(avctx, q->qsv, pkt, frame, got_packet);
 }
 
 static av_cold int qsv_enc_close(AVCodecContext *avctx)
 {
     QSVMPEGEncContext *q = avctx->priv_data;
+    int ret              = 0;
 
-    return ff_qsv_enc_close(avctx, &q->qsv);
+    if (!avctx->internal->is_copy) {
+        ret = ff_qsv_enc_close(avctx, q->qsv);
+        av_freep(&q->qsv);
+    }
+
+    return ret;
 }
 
 #define OFFSET(x) offsetof(QSVMPEGEncContext, x)
 #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
-    { "async_depth", "Number which limits internal frame buffering", OFFSET(qsv.async_depth), AV_OPT_TYPE_INT, { .i64 = ASYNC_DEPTH_DEFAULT }, 0, INT_MAX, VE },
-    { "timeout", "Maximum timeout in milliseconds when the device has been busy", OFFSET(qsv.timeout), AV_OPT_TYPE_INT, { .i64 = TIMEOUT_DEFAULT }, 0, INT_MAX, VE },
-    { "qpi", NULL, OFFSET(qsv.qpi), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 51, VE },
-    { "qpp", NULL, OFFSET(qsv.qpp), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 51, VE },
-    { "qpb", NULL, OFFSET(qsv.qpb), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 51, VE },
-    { "profile", NULL, OFFSET(qsv.profile), AV_OPT_TYPE_INT, { .i64 = MFX_PROFILE_UNKNOWN }, 0, INT_MAX, VE, "profile" },
+    { "async_depth", "Number which limits internal frame buffering", OFFSET(options.async_depth), AV_OPT_TYPE_INT, { .i64 = ASYNC_DEPTH_DEFAULT }, 0, INT_MAX, VE },
+    { "timeout", "Maximum timeout in milliseconds when the device has been busy", OFFSET(options.timeout), AV_OPT_TYPE_INT, { .i64 = TIMEOUT_DEFAULT }, 0, INT_MAX, VE },
+    { "qpi", NULL, OFFSET(options.qpi), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 51, VE },
+    { "qpp", NULL, OFFSET(options.qpp), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 51, VE },
+    { "qpb", NULL, OFFSET(options.qpb), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 51, VE },
+    { "profile", NULL, OFFSET(options.profile), AV_OPT_TYPE_INT, { .i64 = MFX_PROFILE_UNKNOWN }, 0, INT_MAX, VE, "profile" },
     { "unknown", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_UNKNOWN      }, INT_MIN, INT_MAX, VE, "profile" },
     { "simple" , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_MPEG2_SIMPLE }, INT_MIN, INT_MAX, VE, "profile" },
     { "main"   , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_MPEG2_MAIN   }, INT_MIN, INT_MAX, VE, "profile" },
     { "high"   , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_PROFILE_MPEG2_HIGH   }, INT_MIN, INT_MAX, VE, "profile" },
-    { "level", NULL, OFFSET(qsv.level), AV_OPT_TYPE_INT, { .i64 = MFX_LEVEL_UNKNOWN }, 0, INT_MAX, VE, "level" },
+    { "level", NULL, OFFSET(options.level), AV_OPT_TYPE_INT, { .i64 = MFX_LEVEL_UNKNOWN }, 0, INT_MAX, VE, "level" },
     { "unknown" , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_LEVEL_UNKNOWN        }, INT_MIN, INT_MAX, VE, "level" },
     { "low"     , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_LEVEL_MPEG2_LOW      }, INT_MIN, INT_MAX, VE, "level" },
     { "main"    , NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MFX_LEVEL_MPEG2_MAIN     }, INT_MIN, INT_MAX, VE, "level" },

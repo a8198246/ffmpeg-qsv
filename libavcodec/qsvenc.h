@@ -47,6 +47,18 @@ typedef struct QSVEncBuffer {
     struct QSVEncBuffer *pool;
 } QSVEncBuffer;
 
+typedef struct QSVEncOptions {
+    int async_depth;
+    int timeout;
+    int qpi;
+    int qpp;
+    int qpb;
+    int idr_interval;
+    int profile;
+    int level;
+    int open_gop;
+} QSVEncOptions;
+
 typedef struct QSVEncContext {
     AVClass *class;
     mfxSession session;
@@ -59,15 +71,7 @@ typedef struct QSVEncContext {
     uint8_t spspps[2][256];
     int64_t first_pts;
     int64_t pts_delay;
-    int async_depth;
-    int timeout;
-    int qpi;
-    int qpp;
-    int qpb;
-    int idr_interval;
-    int profile;
-    int level;
-    int open_gop;
+    QSVEncOptions options;
     QSVEncSurfaceList *surf_pool;
     QSVEncSurfaceList *pending_enc, *pending_enc_end;
     QSVEncBuffer *buf_pool;

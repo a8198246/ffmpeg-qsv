@@ -42,15 +42,15 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
     if ((ret = ff_qsv_codec_id_to_mfx(avctx->codec_id)) < 0)
         return ret;
     q->param.mfx.CodecId            = ret;
-    q->param.mfx.CodecProfile       = q->profile;
-    q->param.mfx.CodecLevel         = q->level;
+    q->param.mfx.CodecProfile       = q->options.profile;
+    q->param.mfx.CodecLevel         = q->options.level;
     q->param.mfx.TargetUsage        = MFX_TARGETUSAGE_BALANCED;
     q->param.mfx.GopPicSize         = avctx->gop_size < 0 ? 0 : avctx->gop_size;
     q->param.mfx.GopRefDist         = av_clip(avctx->max_b_frames, -1, 16) + 1;
     q->param.mfx.GopOptFlag         = avctx->flags & CODEC_FLAG_CLOSED_GOP ?
                                       MFX_GOP_CLOSED :
                                       0;
-    q->param.mfx.IdrInterval        = q->idr_interval;
+    q->param.mfx.IdrInterval        = q->options.idr_interval;
     q->param.mfx.NumSlice           = avctx->slices;
     q->param.mfx.NumRefFrame        = avctx->refs < 0 ? 0 : avctx->refs;
     q->param.mfx.EncodedOrder       = 0;
@@ -60,7 +60,7 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
   //q->param.mfx.BRCParamMultiplier = 0; // API 1.3
   //q->param.mfx.SliceGroupsPresent = 0; // API 1.6
     q->param.mfx.RateControlMethod = 
-        (q->qpi >= 0 && q->qpp >= 0 && q->qpb >= 0) ||
+        (q->options.qpi >= 0 && q->options.qpp >= 0 && q->options.qpb >= 0) ||
         avctx->flags & CODEC_FLAG_QSCALE      ? MFX_RATECONTROL_CQP :
         avctx->rc_max_rate &&
         avctx->rc_max_rate == avctx->bit_rate ? MFX_RATECONTROL_CBR :
@@ -98,8 +98,8 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
         break;
     case MFX_RATECONTROL_CQP: // API 1.1
         av_log(avctx, AV_LOG_INFO, "RateControlMethod:CQP\n");
-        if (q->qpi >= 0) {
-            q->param.mfx.QPI = q->qpi;
+        if (q->options.qpi >= 0) {
+            q->param.mfx.QPI = q->options.qpi;
         } else {
             quant = avctx->global_quality / FF_QP2LAMBDA;
             if (avctx->i_quant_factor)
@@ -108,15 +108,15 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
             q->param.mfx.QPI = av_clip(quant, 0, 51);
         }
 
-        if (q->qpp >= 0) {
-            q->param.mfx.QPP = q->qpp;
+        if (q->options.qpp >= 0) {
+            q->param.mfx.QPP = q->options.qpp;
         } else {
             quant = avctx->global_quality / FF_QP2LAMBDA;
             q->param.mfx.QPP = av_clip(quant, 0, 51);
         }
 
-        if (q->qpb >= 0) {
-            q->param.mfx.QPB = q->qpb;
+        if (q->options.qpb >= 0) {
+            q->param.mfx.QPB = q->options.qpb;
         } else {
             quant = avctx->global_quality / FF_QP2LAMBDA;
             if (avctx->b_quant_factor)
@@ -242,7 +242,7 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
                "Unknown Intel QuickSync encoder implementation %d.\n", impl);
 
     q->param.IOPattern  = MFX_IOPATTERN_IN_SYSTEM_MEMORY;
-    q->param.AsyncDepth = q->async_depth;
+    q->param.AsyncDepth = q->options.async_depth;
 
     if ((ret = init_video_param(avctx, q)) < 0)
         return ret;
@@ -379,44 +379,20 @@ static void set_surface_param(QSVEncContext *q, mfxFrameSurface1 *surf,
     surf->Data.TimeStamp = frame->pts;
 }
 
-static int put_surface_from_frame(AVCodecContext *avctx, QSVEncContext *q, AVFrame *frame)
+static mfxFrameSurface1 *get_surface_from_frame(AVCodecContext *avctx,
+                                                QSVEncContext *q,
+                                                AVFrame *frame)
 {
     QSVEncSurfaceList *list;
     AVFrame *clone;
 
     if (!(list = get_surface_pool(q)))
-        return AVERROR(ENOMEM);
+        return NULL;
 
     if (!(clone = clone_aligned_frame(avctx, frame)))
-        return AVERROR(ENOMEM);
+        return NULL;
 
     set_surface_param(q, &list->surface, clone);
-
-    list->prev = q->pending_enc_end;
-    list->next = NULL;
-
-    if (q->pending_enc_end)
-        q->pending_enc_end->next = list;
-    else
-        q->pending_enc = list;
-
-    q->pending_enc_end = list;
-
-    return 0;
-}
-
-static mfxFrameSurface1 *get_surface(QSVEncContext *q)
-{
-    QSVEncSurfaceList *list = q->pending_enc;
-
-    q->pending_enc = list->next;
-
-    if (q->pending_enc)
-        q->pending_enc->prev = NULL;
-    else
-        q->pending_enc_end = NULL;
-
-    list->prev = list->next = NULL;
 
     return &list->surface;
 }
@@ -593,57 +569,42 @@ static void print_interlace_msg(AVCodecContext *avctx, QSVEncContext *q)
 int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
                      AVPacket *pkt, const AVFrame *frame, int *got_packet)
 {
-    mfxFrameSurface1 *surf = NULL;
-    QSVEncBuffer *outbuf   = NULL;
-    int busymsec           = 0;
+    mfxFrameSurface1 *insurf = NULL;
+    QSVEncBuffer *outbuf     = NULL;
+    int busymsec             = 0;
     int ret;
 
     *got_packet = 0;
 
     if (frame) {
-        av_log(q, AV_LOG_DEBUG, "frame->pts:%"PRId64"\n", frame->pts);
+        av_log(avctx, AV_LOG_DEBUG, "frame->pts:%"PRId64"\n", frame->pts);
 
         if (q->first_pts == AV_NOPTS_VALUE)
             q->first_pts = frame->pts;
         else if (q->pts_delay == AV_NOPTS_VALUE)
             q->pts_delay = frame->pts - q->first_pts;
 
-        if ((ret = put_surface_from_frame(avctx, q, frame)) < 0)
-            return ret;
-
-        ret = MFX_ERR_MORE_DATA;
-    } else {
-        av_log(q, AV_LOG_DEBUG, "frame:NULL\n");
-
-        ret = MFX_ERR_NONE;
+        insurf = get_surface_from_frame(avctx, q, frame);
+        if (!insurf)
+            return AVERROR(ENOMEM);
     }
 
+    outbuf = get_buffer(q);
     do {
-        if (ret == MFX_ERR_MORE_DATA) {
-            if (q->pending_enc)
-                surf = get_surface(q);
-            else
-                break;
-        }
-
-        outbuf = get_buffer(q);
-
-        ret = MFXVideoENCODE_EncodeFrameAsync(q->session, NULL, surf,
+        ret = MFXVideoENCODE_EncodeFrameAsync(q->session, NULL, insurf,
                                               &outbuf->bs, &outbuf->sync);
-        av_log(avctx, AV_LOG_DEBUG, "MFXVideoENCODE_EncodeFrameAsync():%d\n", ret);
+        av_log(avctx, AV_LOG_DEBUG,
+               "MFXVideoENCODE_EncodeFrameAsync():%d\n", ret);
 
         if (ret == MFX_WRN_DEVICE_BUSY) {
-            if (busymsec > q->timeout) {
+            if (busymsec > q->options.timeout) {
                 av_log(avctx, AV_LOG_WARNING, "Timeout, device is so busy\n");
-                return AVERROR(EIO);
-            } else {
-                av_usleep(1000);
-                busymsec++;
+                break;
             }
-        } else {
-            busymsec = 0;
+            av_usleep(1000);
+            busymsec++;
         }
-    } while (ret == MFX_ERR_MORE_DATA || ret == MFX_WRN_DEVICE_BUSY);
+    } while (ret == MFX_WRN_DEVICE_BUSY);
 
     if (ret == MFX_WRN_INCOMPATIBLE_VIDEO_PARAM && frame->interlaced_frame)
         print_interlace_msg(avctx, q);
@@ -654,11 +615,12 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
         enqueue_buffer(&q->pending_sync, &q->pending_sync_end, &q->nb_sync,
                        outbuf);
 
+    outbuf = NULL;
     if (q->pending_sync &&
-        (q->nb_sync >= q->req.NumFrameMin || !frame)) {
+        (q->nb_sync >= q->req.NumFrameMin || !frame))
         outbuf = dequeue_buffer(&q->pending_sync, &q->pending_sync_end,
                                 &q->nb_sync);
-
+    if (outbuf) {
         ret = MFXVideoCORE_SyncOperation(q->session, outbuf->sync,
                                          SYNC_TIME_DEFAULT);
         av_log(avctx, AV_LOG_DEBUG, "MFXVideoCORE_SyncOperation():%d\n", ret);
@@ -678,9 +640,10 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
         enqueue_buffer(&q->pending_dts, &q->pending_dts_end, NULL, outbuf);
     }
 
-    if (q->pending_dts && q->pending_dts->dts != AV_NOPTS_VALUE) {
+    outbuf = NULL;
+    if (q->pending_dts && q->pending_dts->dts != AV_NOPTS_VALUE)
         outbuf = dequeue_buffer(&q->pending_dts, &q->pending_dts_end, NULL);
-
+    if (outbuf) {
         print_frametype(avctx, q, &outbuf->bs, 12);
 
         if ((ret = ff_alloc_packet(pkt, outbuf->bs.DataLength)) < 0) {
