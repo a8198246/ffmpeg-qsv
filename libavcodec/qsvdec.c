@@ -448,7 +448,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
         curbs = get_bitstream_from_packet(q, avpkt);
         pthread_mutex_unlock(&q->bs_mutex);
         if (!curbs)
-            return AVERROR(ENOMEM);;
+            return AVERROR(ENOMEM);
     }
 
     pthread_mutex_lock(&q->decode_mutex);
@@ -549,8 +549,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
     pthread_cond_broadcast(&q->decode_cond);
     pthread_mutex_unlock(&q->decode_mutex);
 
-    if (ret == MFX_ERR_MORE_DATA)
-        ret = 0;
+    ret = ret == MFX_ERR_MORE_DATA ? 0 : ff_qsv_error(ret);
 
     pthread_mutex_lock(&q->sync_mutex);
     while (q->sync_cnt != pkt_cnt)
@@ -608,10 +607,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
     pthread_cond_broadcast(&q->exit_cond);
     pthread_mutex_unlock(&q->exit_mutex);
 
-    if (ret < 0)
-        return ff_qsv_error(ret);
-
-    return size;
+    return (ret < 0) ? ret : size;
 }
 
 int ff_qsv_dec_flush(QSVDecContext *q)
