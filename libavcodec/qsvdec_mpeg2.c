@@ -34,6 +34,7 @@
 typedef struct QSVDecMpegContext {
     AVClass *class;
     QSVDecOptions options;
+    QSVDecContext mem;
     QSVDecContext *qsv;
 } QSVDecMpegContext;
 
@@ -42,50 +43,47 @@ static const uint8_t fake_ipic[] = { 0x00, 0x00, 0x01, 0x00, 0x00, 0x0F, 0xFF, 0
 static av_cold int qsv_dec_init(AVCodecContext *avctx)
 {
     QSVDecMpegContext *q = avctx->priv_data;
-    int ret              = AVERROR(ENOMEM);
     mfxBitstream bs;
+    int ret;
 
     avctx->pix_fmt = AV_PIX_FMT_NV12;
 
     memset(&bs, 0, sizeof(bs));
 
-    if (!(q->qsv = av_mallocz(sizeof(*q->qsv))))
-        goto fail;
+    q->qsv = &q->mem;
 
     q->qsv->options   = q->options;
     q->qsv->ts_by_qsv = 1;
 
-    // Called in avformat_find_stream_info()
-    if (!avctx->extradata_size)
-        return ff_qsv_dec_mfxinit(avctx, q->qsv);
-
-    //FIXME feed it a fake I-picture directly
-    if (!(bs.Data = av_malloc(avctx->extradata_size + sizeof(fake_ipic))))
-        goto fail;
-
-    memcpy(bs.Data, avctx->extradata, avctx->extradata_size);
-    bs.DataLength += avctx->extradata_size;
-    memcpy(bs.Data + bs.DataLength, fake_ipic, sizeof(fake_ipic));
-    bs.DataLength += sizeof(fake_ipic);
-    bs.MaxLength = bs.DataLength;
-
-    q->qsv->bs = &bs;
-
-    ret = ff_qsv_dec_init(avctx, q->qsv);
+    ret = ff_qsv_dec_init_mfx(avctx, q->qsv);
     if (ret < 0)
-        goto fail;
+        return ret;
 
-    q->qsv->bs = NULL;
+    if (avctx->extradata_size > 0) {
+        //FIXME feed it a fake I-picture directly
+        if (!(bs.Data = av_malloc(avctx->extradata_size + sizeof(fake_ipic))))
+            goto fail;
 
-    av_freep(&bs.Data);
+        memcpy(bs.Data, avctx->extradata, avctx->extradata_size);
+        bs.DataLength += avctx->extradata_size;
+        memcpy(bs.Data + bs.DataLength, fake_ipic, sizeof(fake_ipic));
+        bs.DataLength += sizeof(fake_ipic);
+        bs.MaxLength = bs.DataLength;
+
+        ret = ff_qsv_dec_init_decoder(avctx, q->qsv, &bs);
+        if (ret < 0)
+            goto fail;
+
+        av_freep(&bs.Data);
+    }
 
     return ret;
 
 fail:
-    av_freep(&q->qsv);
+    ff_qsv_dec_close(q->qsv);
     av_freep(&bs.Data);
 
-    return ret;
+    return (ret < 0) ? ret : AVERROR(ENOMEM);
 }
 
 static int qsv_dec_frame(AVCodecContext *avctx, void *data,
@@ -93,19 +91,6 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
 {
     QSVDecMpegContext *q = avctx->priv_data;
     AVFrame *frame       = data;
-    int ret;
-
-    // Called in avformat_find_stream_info()
-    if (!q->qsv->initialized)
-        return ff_qsv_dec_decinit(avctx, q->qsv, frame, got_frame, avpkt);
-
-    // Reinit so finished flushing old video parameter cached frames
-    if (q->qsv->need_reinit && q->qsv->last_ret == MFX_ERR_MORE_DATA &&
-        !q->qsv->nb_sync) {
-        ret = ff_qsv_dec_reinit(avctx, q->qsv);
-        if (ret < 0)
-            return ret;
-    }
 
     return ff_qsv_dec_frame(avctx, q->qsv, frame, got_frame, avpkt);
 }
@@ -115,10 +100,8 @@ static int qsv_dec_close(AVCodecContext *avctx)
     QSVDecMpegContext *q = avctx->priv_data;
     int ret              = 0;
 
-    if (!avctx->internal->is_copy) {
+    if (!avctx->internal->is_copy)
         ret = ff_qsv_dec_close(q->qsv);
-        av_freep(&q->qsv);
-    }
 
     return ret;
 }

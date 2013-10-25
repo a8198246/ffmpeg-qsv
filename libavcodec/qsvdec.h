@@ -56,16 +56,16 @@ typedef struct QSVDecOptions {
 
 typedef struct QSVDecContext {
     AVClass *class;
+    QSVDecOptions options;
     mfxSession session;
     mfxVideoParam param;
     mfxFrameAllocRequest req;
     mfxBitstream *bs;
-    QSVDecOptions options;
+    mfxBitstream *reinit;
+    int initialized;
     int ts_cnt;
     int ts_by_qsv;
     int last_ret;
-    int need_reinit;
-    int initialized;
     QSVDecTimeStamp *ts;
     int nb_ts;
     QSVDecBitstreamList *bs_pool;
@@ -73,28 +73,19 @@ typedef struct QSVDecContext {
     QSVDecSurfaceList *surf_pool;
     QSVDecSurfaceList *pending_sync, *pending_sync_end;
     int nb_sync;
-    int pkt_cnt;
-    int decode_cnt;
-    int sync_cnt;
-    int exit_cnt;
 } QSVDecContext;
 
-int ff_qsv_dec_init(AVCodecContext *s, QSVDecContext *q);
+int ff_qsv_dec_init_mfx(AVCodecContext *c, QSVDecContext *q);
 
-int ff_qsv_dec_mfxinit(AVCodecContext *s, QSVDecContext *q);
+int ff_qsv_dec_init_decoder(AVCodecContext *c, QSVDecContext *q,
+                            mfxBitstream *bs);
 
-int ff_qsv_dec_frame(AVCodecContext *s, QSVDecContext *q,
+int ff_qsv_dec_frame(AVCodecContext *c, QSVDecContext *q,
                      AVFrame *frame, int *got_frame,
                      AVPacket *avpkt);
 
 int ff_qsv_dec_flush(QSVDecContext *q);
 
 int ff_qsv_dec_close(QSVDecContext *q);
-
-int ff_qsv_dec_decinit(AVCodecContext *s, QSVDecContext *q,
-                       AVFrame *frame, int *got_frame,
-                       AVPacket *avpkt);
-
-int ff_qsv_dec_reinit(AVCodecContext *s, QSVDecContext *q);
 
 #endif /* AVCODEC_QSVDEC_H */

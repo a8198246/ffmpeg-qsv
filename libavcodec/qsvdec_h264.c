@@ -34,6 +34,7 @@
 typedef struct QSVDecH264Context {
     AVClass *class;
     QSVDecOptions options;
+    QSVDecContext mem;
     QSVDecContext *qsv;
     AVBitStreamFilterContext *bsf;
 } QSVDecH264Context;
@@ -43,63 +44,62 @@ static const uint8_t fake_idr[] = { 0x00, 0x00, 0x01, 0x65 };
 static av_cold int qsv_dec_init(AVCodecContext *avctx)
 {
     QSVDecH264Context *q = avctx->priv_data;
-    int ret              = AVERROR(ENOMEM);
     mfxBitstream bs;
+    int ret;
 
     avctx->pix_fmt = AV_PIX_FMT_NV12;
 
     memset(&bs, 0, sizeof(bs));
 
-    if (!(q->qsv = av_mallocz(sizeof(*q->qsv))))
-        goto fail;
+    q->qsv = &q->mem;
 
     q->qsv->options = q->options;
 
-    if (!(q->bsf = av_bitstream_filter_init("h264_mp4toannexb")))
-        goto fail;
-
-    // Called in avformat_find_stream_info()
-    if (!avctx->extradata_size)
-        return ff_qsv_dec_mfxinit(avctx, q->qsv);
-
-    // Data and DataLength passed as dummy pointers
-    ret = av_bitstream_filter_filter(q->bsf, avctx, NULL,
-                                     &bs.Data, &bs.DataLength,
-                                     NULL, 0, 0);
-    if (ret < 0) {
-        av_bitstream_filter_close(q->bsf);
-        q->bsf = NULL;
-    }
-
-    //FIXME feed it a fake IDR directly
-    if (!(bs.Data = av_malloc(avctx->extradata_size + sizeof(fake_idr))))
-        goto fail;
-
-    memcpy(bs.Data, avctx->extradata, avctx->extradata_size);
-    bs.DataLength += avctx->extradata_size;
-    memcpy(bs.Data + bs.DataLength, fake_idr, sizeof(fake_idr));
-    bs.DataLength += sizeof(fake_idr);
-    bs.MaxLength = bs.DataLength;
-
-    q->qsv->bs = &bs;
-
-    ret = ff_qsv_dec_init(avctx, q->qsv);
+    ret = ff_qsv_dec_init_mfx(avctx, q->qsv);
     if (ret < 0)
-        goto fail;
+        return ret;
 
-    q->qsv->bs = NULL;
+    if (avctx->extradata_size > 0) {
+        if (avctx->extradata[0] == 1) {
+            if (!(q->bsf = av_bitstream_filter_init("h264_mp4toannexb")))
+                goto fail;
 
-    av_freep(&bs.Data);
+            // Data and DataLength passed as dummy pointers
+            ret = av_bitstream_filter_filter(q->bsf, avctx, NULL,
+                                             &bs.Data, &bs.DataLength,
+                                             NULL, 0, 0);
+            if (ret < 0) {
+                av_bitstream_filter_close(q->bsf);
+                q->bsf = NULL;
+            }
+        }
+
+        //FIXME feed it a fake IDR directly
+        if (!(bs.Data = av_malloc(avctx->extradata_size + sizeof(fake_idr))))
+            goto fail;
+
+        memcpy(bs.Data, avctx->extradata, avctx->extradata_size);
+        bs.DataLength += avctx->extradata_size;
+        memcpy(bs.Data + bs.DataLength, fake_idr, sizeof(fake_idr));
+        bs.DataLength += sizeof(fake_idr);
+        bs.MaxLength = bs.DataLength;
+
+        ret = ff_qsv_dec_init_decoder(avctx, q->qsv, &bs);
+        if (ret < 0)
+            goto fail;
+
+        av_freep(&bs.Data);
+    }
 
     return ret;
 
 fail:
-    av_freep(&q->qsv);
+    ff_qsv_dec_close(q->qsv);
     av_freep(&bs.Data);
     if (q->bsf)
         av_bitstream_filter_close(q->bsf);
 
-    return ret;
+    return (ret < 0) ? ret : AVERROR(ENOMEM);
 }
 
 static int qsv_dec_frame(AVCodecContext *avctx, void *data,
@@ -110,18 +110,6 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
     uint8_t *p           = NULL;
     int size             = 0;
     int ret;
-
-    // Called in avformat_find_stream_info()
-    if (!q->qsv->initialized)
-        return ff_qsv_dec_decinit(avctx, q->qsv, frame, got_frame, avpkt);
-
-    // Reinit so finished flushing old video parameter cached frames
-    if (q->qsv->need_reinit && q->qsv->last_ret == MFX_ERR_MORE_DATA &&
-        !q->qsv->nb_sync) {
-        ret = ff_qsv_dec_reinit(avctx, q->qsv);
-        if (ret < 0)
-            return ret;
-    }
 
     if (q->bsf)
         av_bitstream_filter_filter(q->bsf, avctx, NULL,
@@ -149,7 +137,6 @@ static int qsv_dec_close(AVCodecContext *avctx)
 
     if (!avctx->internal->is_copy) {
         ret = ff_qsv_dec_close(q->qsv);
-        av_freep(&q->qsv);
         if (q->bsf)
             av_bitstream_filter_close(q->bsf);
     }
