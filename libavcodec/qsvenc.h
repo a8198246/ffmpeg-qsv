@@ -53,10 +53,16 @@ typedef struct QSVEncOptions {
     int qpi;
     int qpp;
     int qpb;
+    int tu;
+    int rdo;
+    int aud;
+    int end_of_sequence;
+    int end_of_stream;
+    int pic_timing_sei;
+    int vui_nal_hrd_parameters;
     int idr_interval;
     int profile;
     int level;
-    int open_gop;
 } QSVEncOptions;
 
 typedef struct QSVEncContext {

@@ -67,37 +67,37 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
                                                 MFX_RATECONTROL_VBR;
 
     if (ret == MFX_CODEC_AVC)
-        av_log(avctx, AV_LOG_INFO, "Codec:AVC\n");
+        av_log(avctx, AV_LOG_INFO, "Codec: AVC\n");
     else if (ret == MFX_CODEC_MPEG2)
-        av_log(avctx, AV_LOG_INFO, "Codec:MPEG2\n");
+        av_log(avctx, AV_LOG_INFO, "Codec: MPEG2\n");
     if (q->param.mfx.GopPicSize)
-        av_log(avctx, AV_LOG_INFO, "GopPicSize:%d\n", q->param.mfx.GopPicSize);
+        av_log(avctx, AV_LOG_INFO, "GopPicSize: %d\n", q->param.mfx.GopPicSize);
     if (q->param.mfx.GopRefDist)
-        av_log(avctx, AV_LOG_INFO, "GopRefDist:%d\n", q->param.mfx.GopRefDist);
+        av_log(avctx, AV_LOG_INFO, "GopRefDist: %d\n", q->param.mfx.GopRefDist);
     if (q->param.mfx.NumSlice)
-        av_log(avctx, AV_LOG_INFO, "NumSlice:%d\n", q->param.mfx.NumSlice);
+        av_log(avctx, AV_LOG_INFO, "NumSlice: %d\n", q->param.mfx.NumSlice);
     if (q->param.mfx.NumRefFrame)
-        av_log(avctx, AV_LOG_INFO, "NumRefFrame:%d\n", q->param.mfx.NumRefFrame);
+        av_log(avctx, AV_LOG_INFO, "NumRefFrame: %d\n", q->param.mfx.NumRefFrame);
 
     switch (q->param.mfx.RateControlMethod) {
     case MFX_RATECONTROL_CBR: // API 1.0
-        av_log(avctx, AV_LOG_INFO, "RateControlMethod:CBR\n");
+        av_log(avctx, AV_LOG_INFO, "RateControlMethod: CBR\n");
       //q->param.mfx.InitialDelayInKB;
         q->param.mfx.TargetKbps = avctx->bit_rate / 1000;
         q->param.mfx.MaxKbps    = avctx->bit_rate / 1000;
-        av_log(avctx, AV_LOG_INFO, "TargetKbps:%d\n", q->param.mfx.TargetKbps);
+        av_log(avctx, AV_LOG_INFO, "TargetKbps: %d\n", q->param.mfx.TargetKbps);
         break;
     case MFX_RATECONTROL_VBR: // API 1.0
-        av_log(avctx, AV_LOG_INFO, "RateControlMethod:VBR\n");
+        av_log(avctx, AV_LOG_INFO, "RateControlMethod: VBR\n");
       //q->param.mfx.InitialDelayInKB;
         q->param.mfx.TargetKbps = avctx->bit_rate / 1000; // >1072
         q->param.mfx.MaxKbps    = avctx->rc_max_rate / 1000;
-        av_log(avctx, AV_LOG_INFO, "TargetKbps:%d\n", q->param.mfx.TargetKbps);
+        av_log(avctx, AV_LOG_INFO, "TargetKbps: %d\n", q->param.mfx.TargetKbps);
         if (q->param.mfx.MaxKbps)
-            av_log(avctx, AV_LOG_INFO, "MaxKbps:%d\n", q->param.mfx.MaxKbps);
+            av_log(avctx, AV_LOG_INFO, "MaxKbps: %d\n", q->param.mfx.MaxKbps);
         break;
     case MFX_RATECONTROL_CQP: // API 1.1
-        av_log(avctx, AV_LOG_INFO, "RateControlMethod:CQP\n");
+        av_log(avctx, AV_LOG_INFO, "RateControlMethod: CQP\n");
         if (q->options.qpi >= 0) {
             q->param.mfx.QPI = q->options.qpi;
         } else {
@@ -125,12 +125,12 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
             q->param.mfx.QPB = av_clip(quant, 0, 51);
         }
 
-        av_log(avctx, AV_LOG_INFO, "QPI:%d, QPP:%d, QPB:%d\n",
+        av_log(avctx, AV_LOG_INFO, "QPI: %d, QPP: %d, QPB: %d\n",
                q->param.mfx.QPI, q->param.mfx.QPP, q->param.mfx.QPB);
         break;
     case MFX_RATECONTROL_AVBR: // API 1.3
         av_log(avctx, AV_LOG_ERROR,
-               "RateControlMethod:AVBR is unimplemented.\n");
+               "RateControlMethod: AVBR is unimplemented.\n");
         /*
         q->param.mfx.TargetKbps;
         q->param.mfx.Accuracy;    // API 1.3
@@ -139,7 +139,7 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
         return AVERROR(EINVAL);
     case MFX_RATECONTROL_LA: // API 1.7
         av_log(avctx, AV_LOG_ERROR,
-               "RateControlMethod:LA is unimplemented.\n");
+               "RateControlMethod: LA is unimplemented.\n");
         /*
         q->param.mfx.InitialDelayInKB;
         q->param.mfx.TargetKbps;
@@ -150,7 +150,7 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
         return AVERROR(EINVAL);
     default:
         av_log(avctx, AV_LOG_ERROR,
-               "RateControlMethod:%d is undefined.\n",
+               "RateControlMethod: %d is undefined.\n",
                q->param.mfx.RateControlMethod);
         return AVERROR(EINVAL);
     }
@@ -169,14 +169,14 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
     q->param.mfx.FrameInfo.PicStruct     = MFX_PICSTRUCT_UNKNOWN;
     q->param.mfx.FrameInfo.ChromaFormat  = MFX_CHROMAFORMAT_YUV420;
 
-    av_log(avctx, AV_LOG_INFO, "FrameRate:%d/%d\n",
+    av_log(avctx, AV_LOG_INFO, "FrameRate: %d/%d\n",
            q->param.mfx.FrameInfo.FrameRateExtN,
            q->param.mfx.FrameInfo.FrameRateExtD);
 
     q->extco.Header.BufferId      = MFX_EXTBUFF_CODING_OPTION;
     q->extco.Header.BufferSz      = sizeof(q->extco);
-    q->extco.RateDistortionOpt    = MFX_CODINGOPTION_UNKNOWN;
-    q->extco.EndOfSequence        = MFX_CODINGOPTION_UNKNOWN;
+    q->extco.RateDistortionOpt    = q->options.rdo;
+    q->extco.EndOfSequence        = q->options.end_of_sequence;
     q->extco.CAVLC                = avctx->coder_type == FF_CODER_TYPE_VLC ?
                                     MFX_CODINGOPTION_ON :
                                     MFX_CODINGOPTION_UNKNOWN;
@@ -188,15 +188,15 @@ static int init_video_param(AVCodecContext *avctx, QSVEncContext *q)
   //q->extco.FieldOutput          = MFX_CODINGOPTION_UNKNOWN; // API 1.3
   //q->extco.ViewOutput           = MFX_CODINGOPTION_UNKNOWN; // API 1.4
     q->extco.MaxDecFrameBuffering = MFX_CODINGOPTION_UNKNOWN;
-    q->extco.AUDelimiter          = MFX_CODINGOPTION_UNKNOWN; // or OFF
-    q->extco.EndOfStream          = MFX_CODINGOPTION_UNKNOWN;
-    q->extco.PicTimingSEI         = MFX_CODINGOPTION_UNKNOWN; // or OFF
-    q->extco.VuiNalHrdParameters  = MFX_CODINGOPTION_UNKNOWN;
+    q->extco.AUDelimiter          = q->options.aud;
+    q->extco.EndOfStream          = q->options.end_of_stream;
+    q->extco.PicTimingSEI         = q->options.pic_timing_sei;
+    q->extco.VuiNalHrdParameters  = q->options.vui_nal_hrd_parameters;
     q->extco.FramePicture         = MFX_CODINGOPTION_ON;
   //q->extco.RecoveryPointSEI     = MFX_CODINGOPTION_UNKNOWN; // API 1.6
 
     if (q->extco.CAVLC == MFX_CODINGOPTION_ON)
-        av_log(avctx, AV_LOG_INFO, "CAVLC:ON\n");
+        av_log(avctx, AV_LOG_INFO, "CAVLC: ON\n");
 
     q->extparam[q->param.NumExtParam] = (mfxExtBuffer *)&q->extco;
     q->param.ExtParam = q->extparam;
@@ -225,7 +225,7 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
     int ret;
 
     if ((ret = MFXInit(impl, &ver, &q->session)) < 0) {
-        av_log(avctx, AV_LOG_DEBUG, "MFXInit():%d\n", ret);
+        av_log(avctx, AV_LOG_DEBUG, "MFXInit(): %d\n", ret);
         return ff_qsv_error(ret);
     }
 
@@ -248,12 +248,12 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
         return ret;
 
     if ((ret = MFXVideoENCODE_QueryIOSurf(q->session, &q->param, &q->req) < 0)) {
-        av_log(avctx, AV_LOG_DEBUG, "MFXVideoENCODE_QueryIOSurf():%d\n", ret);
+        av_log(avctx, AV_LOG_DEBUG, "MFXVideoENCODE_QueryIOSurf(): %d\n", ret);
         return ff_qsv_error(ret);
     }
 
     if (ret = MFXVideoENCODE_Init(q->session, &q->param)) {
-        av_log(avctx, AV_LOG_DEBUG, "MFXVideoENCODE_Init():%d\n", ret);
+        av_log(avctx, AV_LOG_DEBUG, "MFXVideoENCODE_Init(): %d\n", ret);
         return ff_qsv_error(ret);
     }
 
@@ -263,12 +263,12 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
     /*
     av_log(q, AV_LOG_DEBUG, "sps");
     for (int i = 0; i < 64; i+=4)
-        av_log(q, AV_LOG_DEBUG, ":%02x%02x%02x%02x", q->spspps[0][i], q->spspps[0][i+1], q->spspps[0][i+2], q->spspps[0][i+3]);
+        av_log(q, AV_LOG_DEBUG, ": %02x%02x%02x%02x", q->spspps[0][i], q->spspps[0][i+1], q->spspps[0][i+2], q->spspps[0][i+3]);
     av_log(q, AV_LOG_DEBUG, "\n");
 
     av_log(q, AV_LOG_DEBUG, "pps");
     for (int j = 0; j < 64; j+=4)
-        av_log(q, AV_LOG_DEBUG, ":%02x%02x%02x%02x", q->spspps[1][j], q->spspps[1][j+1], q->spspps[1][j+2], q->spspps[1][j+3]);
+        av_log(q, AV_LOG_DEBUG, ": %02x%02x%02x%02x", q->spspps[1][j], q->spspps[1][j+1], q->spspps[1][j+2], q->spspps[1][j+3]);
     av_log(q, AV_LOG_DEBUG, "\n");
     */
 
@@ -522,7 +522,7 @@ static void print_frametype(AVCodecContext *avctx, QSVEncContext *q,
         buf[0] = '\0';
 
         snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf),
-                 "TimeStamp:%"PRId64", ", bs->TimeStamp);
+                 "TimeStamp: %"PRId64", ", bs->TimeStamp);
         snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), "FrameType:");
 
         if (bs->FrameType & MFX_FRAMETYPE_I)
@@ -577,7 +577,7 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
     *got_packet = 0;
 
     if (frame) {
-        av_log(avctx, AV_LOG_DEBUG, "frame->pts:%"PRId64"\n", frame->pts);
+        av_log(avctx, AV_LOG_DEBUG, "frame->pts: %"PRId64"\n", frame->pts);
 
         if (q->first_pts == AV_NOPTS_VALUE)
             q->first_pts = frame->pts;
@@ -594,7 +594,7 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
         ret = MFXVideoENCODE_EncodeFrameAsync(q->session, NULL, insurf,
                                               &outbuf->bs, &outbuf->sync);
         av_log(avctx, AV_LOG_DEBUG,
-               "MFXVideoENCODE_EncodeFrameAsync():%d\n", ret);
+               "MFXVideoENCODE_EncodeFrameAsync(): %d\n", ret);
 
         if (ret == MFX_WRN_DEVICE_BUSY) {
             if (busymsec > q->options.timeout) {
@@ -623,7 +623,7 @@ int ff_qsv_enc_frame(AVCodecContext *avctx, QSVEncContext *q,
     if (outbuf) {
         ret = MFXVideoCORE_SyncOperation(q->session, outbuf->sync,
                                          SYNC_TIME_DEFAULT);
-        av_log(avctx, AV_LOG_DEBUG, "MFXVideoCORE_SyncOperation():%d\n", ret);
+        av_log(avctx, AV_LOG_DEBUG, "MFXVideoCORE_SyncOperation(): %d\n", ret);
         if ((ret = ff_qsv_error(ret)) < 0)
             return ret;
 
