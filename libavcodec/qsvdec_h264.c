@@ -58,10 +58,18 @@ static av_cold int qsv_dec_init(AVCodecContext *avctx)
     if (!(q->bsf = av_bitstream_filter_init("h264_mp4toannexb")))
         goto fail;
 
+    // Called in avformat_find_stream_info()
+    if (!avctx->extradata_size)
+        return ff_qsv_dec_mfxinit(avctx, q->qsv);
+
     // Data and DataLength passed as dummy pointers
-    av_bitstream_filter_filter(q->bsf, avctx, NULL,
-                               &bs.Data, &bs.DataLength,
-                               NULL, 0, 0);
+    ret = av_bitstream_filter_filter(q->bsf, avctx, NULL,
+                                     &bs.Data, &bs.DataLength,
+                                     NULL, 0, 0);
+    if (ret < 0) {
+        av_bitstream_filter_close(q->bsf);
+        q->bsf = NULL;
+    }
 
     //FIXME feed it a fake IDR directly
     if (!(bs.Data = av_malloc(avctx->extradata_size + sizeof(fake_idr))))
@@ -88,7 +96,8 @@ static av_cold int qsv_dec_init(AVCodecContext *avctx)
 fail:
     av_freep(&q->qsv);
     av_freep(&bs.Data);
-    av_bitstream_filter_close(q->bsf);
+    if (q->bsf)
+        av_bitstream_filter_close(q->bsf);
 
     return ret;
 }
@@ -102,6 +111,10 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
     int size             = 0;
     int ret;
 
+    // Called in avformat_find_stream_info()
+    if (!q->qsv->initialized)
+        return ff_qsv_dec_decinit(avctx, q->qsv, frame, got_frame, avpkt);
+
     // Reinit so finished flushing old video parameter cached frames
     if (q->qsv->need_reinit && q->qsv->last_ret == MFX_ERR_MORE_DATA &&
         !q->qsv->nb_sync) {
@@ -110,9 +123,10 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
             return ret;
     }
 
-    av_bitstream_filter_filter(q->bsf, avctx, NULL,
-                               &p, &size,
-                               avpkt->data, avpkt->size, 0);
+    if (q->bsf)
+        av_bitstream_filter_filter(q->bsf, avctx, NULL,
+                                   &p, &size,
+                                   avpkt->data, avpkt->size, 0);
 
     if (size && p && p != avpkt->data) {
         AVPacket pkt = { 0 };
@@ -135,8 +149,9 @@ static int qsv_dec_close(AVCodecContext *avctx)
 
     if (!avctx->internal->is_copy) {
         ret = ff_qsv_dec_close(q->qsv);
-        av_bitstream_filter_close(q->bsf);
         av_freep(&q->qsv);
+        if (q->bsf)
+            av_bitstream_filter_close(q->bsf);
     }
 
     return ret;
@@ -147,6 +162,11 @@ static void qsv_dec_flush(AVCodecContext *avctx)
     QSVDecH264Context *q = avctx->priv_data;
 
     ff_qsv_dec_flush(q->qsv);
+}
+
+static int qsv_dec_update_thread_context(AVCodecContext *dst, const AVCodecContext *src)
+{
+    return 0;
 }
 
 #define OFFSET(x) offsetof(QSVDecH264Context, x)
@@ -174,6 +194,7 @@ AVCodec ff_h264_qsv_decoder = {
     .decode         = qsv_dec_frame,
     .flush          = qsv_dec_flush,
     .close          = qsv_dec_close,
+    .update_thread_context = qsv_dec_update_thread_context,
     .capabilities   = CODEC_CAP_DELAY | CODEC_CAP_PKT_TS | CODEC_CAP_DR1 | CODEC_CAP_FRAME_THREADS,
     .priv_class     = &class,
 };

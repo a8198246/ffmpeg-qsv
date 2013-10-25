@@ -55,6 +55,10 @@ static av_cold int qsv_dec_init(AVCodecContext *avctx)
     q->qsv->options   = q->options;
     q->qsv->ts_by_qsv = 1;
 
+    // Called in avformat_find_stream_info()
+    if (!avctx->extradata_size)
+        return ff_qsv_dec_mfxinit(avctx, q->qsv);
+
     //FIXME feed it a fake I-picture directly
     if (!(bs.Data = av_malloc(avctx->extradata_size + sizeof(fake_ipic))))
         goto fail;
@@ -91,6 +95,10 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
     AVFrame *frame       = data;
     int ret;
 
+    // Called in avformat_find_stream_info()
+    if (!q->qsv->initialized)
+        return ff_qsv_dec_decinit(avctx, q->qsv, frame, got_frame, avpkt);
+
     // Reinit so finished flushing old video parameter cached frames
     if (q->qsv->need_reinit && q->qsv->last_ret == MFX_ERR_MORE_DATA &&
         !q->qsv->nb_sync) {
@@ -122,6 +130,11 @@ static void qsv_dec_flush(AVCodecContext *avctx)
     ff_qsv_dec_flush(q->qsv);
 }
 
+static int qsv_dec_update_thread_context(AVCodecContext *dst, const AVCodecContext *src)
+{
+    return 0;
+}
+
 #define OFFSET(x) offsetof(QSVDecMpegContext, x)
 #define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
 static const AVOption options[] = {
@@ -147,6 +160,7 @@ AVCodec ff_mpeg2_qsv_decoder = {
     .decode         = qsv_dec_frame,
     .flush          = qsv_dec_flush,
     .close          = qsv_dec_close,
+    .update_thread_context = qsv_dec_update_thread_context,
     .capabilities   = CODEC_CAP_DELAY | CODEC_CAP_PKT_TS | CODEC_CAP_DR1 | CODEC_CAP_FRAME_THREADS,
     .priv_class     = &class,
 };
