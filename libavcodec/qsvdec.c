@@ -85,20 +85,8 @@ int ff_qsv_dec_init(AVCodecContext *avctx, QSVDecContext *q)
 
     //q->bs->DataFlag = MFX_BITSTREAM_COMPLETE_FRAME; // can't decode PAFF
 
-    if (!q->need_reinit) {
+    if (!q->need_reinit)
         q->bs->DataLength = q->bs->DataOffset = 0;
-
-        pthread_mutex_init(&q->pkt_mutex   , NULL);
-        pthread_mutex_init(&q->ts_mutex    , NULL);
-        pthread_mutex_init(&q->bs_mutex    , NULL);
-        pthread_mutex_init(&q->decode_mutex, NULL);
-        pthread_mutex_init(&q->sync_mutex  , NULL);
-        pthread_mutex_init(&q->mfx_mutex   , NULL);
-        pthread_mutex_init(&q->exit_mutex  , NULL);
-        pthread_cond_init(&q->decode_cond, NULL);
-        pthread_cond_init(&q->sync_cond  , NULL);
-        pthread_cond_init(&q->exit_cond  , NULL);
-    }
 
     memset(&q->req, 0, sizeof(q->req));
     ret = MFXVideoDECODE_QueryIOSurf(q->session, &q->param, &q->req);
@@ -108,6 +96,7 @@ int ff_qsv_dec_init(AVCodecContext *avctx, QSVDecContext *q)
     }
 
     q->last_ret = MFX_ERR_MORE_DATA;
+    q->initialized = 1;
 
     ret = MFXVideoDECODE_Init(q->session, &q->param);
     if (ret) {
@@ -428,32 +417,19 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
     int size                   = avpkt->size;
     int busymsec               = 0;
     int flush                  = 0;
-    int pkt_cnt;
     int ret;
 
-    pthread_mutex_lock(&q->pkt_mutex);
-    pkt_cnt = q->pkt_cnt++;
-    pthread_mutex_unlock(&q->pkt_mutex);
-    ff_thread_finish_setup(avctx);
     *got_frame = 0;
 
     if (size) {
-        pthread_mutex_lock(&q->ts_mutex);
         ret = put_dts(q, avpkt->pts, avpkt->dts);
-        pthread_mutex_unlock(&q->ts_mutex);
         if (ret < 0)
             return ret;
 
-        pthread_mutex_lock(&q->bs_mutex);
         curbs = get_bitstream_from_packet(q, avpkt);
-        pthread_mutex_unlock(&q->bs_mutex);
         if (!curbs)
             return AVERROR(ENOMEM);
     }
-
-    pthread_mutex_lock(&q->decode_mutex);
-    while (q->decode_cnt != pkt_cnt)
-        pthread_cond_wait(&q->decode_cond, &q->decode_mutex);
 
     // (2) Flush cached frames before reinit
     if (q->need_reinit)
@@ -463,12 +439,10 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
     inbs = q->bs;
 
     do {
-        pthread_mutex_lock(&q->bs_mutex);
         if (inbs && !inbs->DataLength) {
             inbs->MaxLength = 0;
             inbs = NULL;
         }
-        pthread_mutex_unlock(&q->bs_mutex);
 
         if (ret == MFX_ERR_MORE_DATA) {
             if (flush) {
@@ -509,10 +483,8 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
         if (!worksurf)
             break;
 
-        pthread_mutex_lock(&q->mfx_mutex);
         ret = MFXVideoDECODE_DecodeFrameAsync(q->session, inbs,
                                               worksurf, &outsurf, &outsync);
-        pthread_mutex_unlock(&q->mfx_mutex);
         av_log(avctx, AV_LOG_DEBUG,
                "MFXVideoDECODE_DecodeFrameAsync():%d\n", ret);
 
@@ -539,42 +511,25 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
     if (curbs)
         put_pending_bitstream(q, curbs);
 
-    if (outsync) {
-        pthread_mutex_lock(&q->sync_mutex);
+    if (outsync)
         put_sync(q, outsurf, outsync);
-        pthread_mutex_unlock(&q->sync_mutex);
-    }
-
-    q->decode_cnt++;
-    pthread_cond_broadcast(&q->decode_cond);
-    pthread_mutex_unlock(&q->decode_mutex);
 
     ret = ret == MFX_ERR_MORE_DATA ? 0 : ff_qsv_error(ret);
 
-    pthread_mutex_lock(&q->sync_mutex);
-    while (q->sync_cnt != pkt_cnt)
-        pthread_cond_wait(&q->sync_cond, &q->sync_mutex);
     if (q->pending_sync &&
-        (q->nb_sync >= q->req.NumFrameMin || !size || q->need_reinit))
-        get_sync(q, &surf, &sync);
-    q->sync_cnt++;
-    pthread_cond_broadcast(&q->sync_cond);
-    pthread_mutex_unlock(&q->sync_mutex);
-    if (sync) {
+        (q->nb_sync >= q->req.NumFrameMin || !size || q->need_reinit)) {
         int64_t pts, dts;
 
-        pthread_mutex_lock(&q->mfx_mutex);
+        get_sync(q, &surf, &sync);
+
         ret = MFXVideoCORE_SyncOperation(q->session, sync, SYNC_TIME_DEFAULT);
-        pthread_mutex_unlock(&q->mfx_mutex);
         av_log(avctx, AV_LOG_DEBUG,
                "MFXVideoCORE_SyncOperation():%d\n", ret);
         if (ret < 0)
             return ff_qsv_error(ret);
 
         pts = surf->Data.TimeStamp;
-        pthread_mutex_lock(&q->ts_mutex);
         ret = get_dts(q, pts, &dts);
-        pthread_mutex_unlock(&q->ts_mutex);
         if (ret < 0)
             return ret;
 
@@ -600,13 +555,6 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
         *got_frame = 1;
     }
 
-    pthread_mutex_lock(&q->exit_mutex);
-    while (q->exit_cnt != pkt_cnt)
-        pthread_cond_wait(&q->exit_cond, &q->exit_mutex);
-    q->exit_cnt++;
-    pthread_cond_broadcast(&q->exit_cond);
-    pthread_mutex_unlock(&q->exit_mutex);
-
     return (ret < 0) ? ret : size;
 }
 
@@ -630,7 +578,10 @@ int ff_qsv_dec_flush(QSVDecContext *q)
 
 int ff_qsv_dec_close(QSVDecContext *q)
 {
-    int ret = MFXClose(q->session);
+    if (q->initialized)
+        MFXVideoDECODE_Close(q->session);
+
+    MFXClose(q->session);
 
     free_surface_pool(q);
 
@@ -638,18 +589,92 @@ int ff_qsv_dec_close(QSVDecContext *q)
 
     free_bitstream_pool(q);
 
-    pthread_mutex_destroy(&q->pkt_mutex);
-    pthread_mutex_destroy(&q->ts_mutex);
-    pthread_mutex_destroy(&q->bs_mutex);
-    pthread_mutex_destroy(&q->decode_mutex);
-    pthread_mutex_destroy(&q->sync_mutex);
-    pthread_mutex_destroy(&q->mfx_mutex);
-    pthread_mutex_destroy(&q->exit_mutex);
-    pthread_cond_destroy(&q->decode_cond);
-    pthread_cond_destroy(&q->sync_cond);
-    pthread_cond_destroy(&q->exit_cond);
+    return 0;
+}
 
-    return ff_qsv_error(ret);
+int ff_qsv_dec_mfxinit(AVCodecContext *avctx, QSVDecContext *q)
+{
+    mfxIMPL impl   = MFX_IMPL_AUTO_ANY;
+    mfxVersion ver = { { QSV_VERSION_MINOR, QSV_VERSION_MAJOR } };
+    int ret;
+
+    ret = ff_qsv_codec_id_to_mfx(avctx->codec_id);
+    if (ret < 0)
+        return ret;
+
+    q->param.mfx.CodecId = ret;
+
+    ret = MFXInit(impl, &ver, &q->session);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_DEBUG, "MFXInit():%d\n", ret);
+        return ff_qsv_error(ret);
+    }
+
+    MFXQueryIMPL(q->session, &impl);
+
+    if (impl & MFX_IMPL_SOFTWARE)
+        av_log(avctx, AV_LOG_INFO,
+               "Using Intel QuickSync decoder software implementation.\n");
+    else if (impl & MFX_IMPL_HARDWARE)
+        av_log(avctx, AV_LOG_INFO,
+               "Using Intel QuickSync decoder hardware accelerated implementation.\n");
+    else
+        av_log(avctx, AV_LOG_INFO,
+               "Unknown Intel QuickSync decoder implementation %d.\n", impl);
+
+    q->param.IOPattern  = MFX_IOPATTERN_OUT_SYSTEM_MEMORY;
+    q->param.AsyncDepth = q->options.async_depth = 1;
+
+    return 0;
+}
+
+int ff_qsv_dec_decinit(AVCodecContext *avctx, QSVDecContext *q,
+                       AVFrame *frame, int *got_frame, AVPacket *avpkt)
+{
+    int size = avpkt->size;
+    int ret;
+
+    *got_frame = 0;
+
+    if (size) {
+        q->bs = get_bitstream_from_packet(q, avpkt);
+        if (!q->bs)
+            return AVERROR(ENOMEM);
+    }
+
+    ret = MFXVideoDECODE_DecodeHeader(q->session, q->bs, &q->param);
+    av_log(avctx, AV_LOG_DEBUG, "MFXVideoDECODE_DecodeHeader():%d\n", ret);
+    if (ret)
+        return size;
+
+    q->initialized = 1;
+
+    avctx->width                   = q->param.mfx.FrameInfo.CropW;
+    avctx->height                  = q->param.mfx.FrameInfo.CropH;
+    avctx->coded_width             = q->param.mfx.FrameInfo.Width;
+    avctx->coded_height            = q->param.mfx.FrameInfo.Height;
+    avctx->time_base.den           = q->param.mfx.FrameInfo.FrameRateExtN;
+    avctx->time_base.num           = q->param.mfx.FrameInfo.FrameRateExtD /
+                                     avctx->ticks_per_frame;
+    avctx->sample_aspect_ratio.num = q->param.mfx.FrameInfo.AspectRatioW;
+    avctx->sample_aspect_ratio.den = q->param.mfx.FrameInfo.AspectRatioH;
+
+    memset(&q->req, 0, sizeof(q->req));
+    ret = MFXVideoDECODE_QueryIOSurf(q->session, &q->param, &q->req);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_DEBUG, "MFXVideoDECODE_QueryIOSurf():%d\n", ret);
+        return ff_qsv_error(ret);
+    }
+
+    ret = MFXVideoDECODE_Init(q->session, &q->param);
+    if (ret) {
+        av_log(avctx, AV_LOG_DEBUG, "MFXVideoDECODE_Init():%d\n", ret);
+        ret = ff_qsv_error(ret);
+    }
+
+    q->last_ret = MFX_ERR_MORE_DATA;
+
+    return size;
 }
 
 int ff_qsv_dec_reinit(AVCodecContext *avctx, QSVDecContext *q)
