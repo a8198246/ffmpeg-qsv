@@ -37,6 +37,8 @@ typedef struct QSVDecH264Context {
     QSVDecContext mem;
     QSVDecContext *qsv;
     AVBitStreamFilterContext *bsf;
+    uint8_t *extradata;
+    int extradata_size;
 } QSVDecH264Context;
 
 static const uint8_t fake_idr[] = { 0x00, 0x00, 0x01, 0x65 };
@@ -44,10 +46,10 @@ static const uint8_t fake_idr[] = { 0x00, 0x00, 0x01, 0x65 };
 static av_cold int qsv_dec_init(AVCodecContext *avctx)
 {
     QSVDecH264Context *q = avctx->priv_data;
-    mfxBitstream bs;
+    uint8_t *extradata   = NULL;
+    int extradata_size   = 0;
     int ret;
-
-    avctx->pix_fmt = AV_PIX_FMT_NV12;
+    mfxBitstream bs;
 
     memset(&bs, 0, sizeof(bs));
 
@@ -55,23 +57,33 @@ static av_cold int qsv_dec_init(AVCodecContext *avctx)
 
     q->qsv->options = q->options;
 
+    if (avctx->pix_fmt == AV_PIX_FMT_NONE)
+        q->qsv->options.async_depth = 1;
+
+    avctx->pix_fmt = AV_PIX_FMT_NV12;
+
     ret = ff_qsv_dec_init_mfx(avctx, q->qsv);
     if (ret < 0)
         return ret;
 
     if (avctx->extradata_size > 0) {
         if (avctx->extradata[0] == 1) {
-            if (!(q->bsf = av_bitstream_filter_init("h264_mp4toannexb")))
+            AVBitStreamFilterContext *bsf;
+
+            if (!(extradata = av_malloc(avctx->extradata_size)))
+                goto fail;
+            memcpy(extradata, avctx->extradata, avctx->extradata_size);
+            extradata_size = avctx->extradata_size;
+
+            if (!(bsf = av_bitstream_filter_init("h264_mp4toannexb")))
                 goto fail;
 
             // Data and DataLength passed as dummy pointers
-            ret = av_bitstream_filter_filter(q->bsf, avctx, NULL,
-                                             &bs.Data, &bs.DataLength,
-                                             NULL, 0, 0);
-            if (ret < 0) {
-                av_bitstream_filter_close(q->bsf);
-                q->bsf = NULL;
-            }
+            av_bitstream_filter_filter(bsf, avctx, NULL,
+                                       &bs.Data, &bs.DataLength,
+                                       NULL, 0, 0);
+
+            av_bitstream_filter_close(bsf);
         }
 
         //FIXME feed it a fake IDR directly
@@ -88,16 +100,25 @@ static av_cold int qsv_dec_init(AVCodecContext *avctx)
         if (ret < 0)
             goto fail;
 
-        av_freep(&bs.Data);
+        if (extradata) {
+            av_free(avctx->extradata);
+            avctx->extradata      = extradata;
+            avctx->extradata_size = extradata_size;
+        }
+
+        av_free(bs.Data);
     }
 
     return ret;
 
 fail:
     ff_qsv_dec_close(q->qsv);
-    av_freep(&bs.Data);
-    if (q->bsf)
-        av_bitstream_filter_close(q->bsf);
+    av_free(bs.Data);
+    if (extradata) {
+        av_free(avctx->extradata);
+        avctx->extradata      = extradata;
+        avctx->extradata_size = extradata_size;
+    }
 
     return (ret < 0) ? ret : AVERROR(ENOMEM);
 }
@@ -110,6 +131,18 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
     uint8_t *p           = NULL;
     int size             = 0;
     int ret;
+
+    if (!q->bsf && avctx->extradata_size > 0 && avctx->extradata[0] == 1) {
+        if (!(q->extradata = av_malloc(avctx->extradata_size)))
+            return AVERROR(ENOMEM);
+        memcpy(q->extradata, avctx->extradata, avctx->extradata_size);
+        q->extradata_size = avctx->extradata_size;
+
+        if (!(q->bsf = av_bitstream_filter_init("h264_mp4toannexb"))) {
+            av_freep(&q->extradata);
+            return AVERROR(ENOMEM);
+        }
+    }
 
     if (q->bsf)
         av_bitstream_filter_filter(q->bsf, avctx, NULL,
@@ -139,6 +172,11 @@ static int qsv_dec_close(AVCodecContext *avctx)
         ret = ff_qsv_dec_close(q->qsv);
         if (q->bsf)
             av_bitstream_filter_close(q->bsf);
+        if (q->extradata) {
+            av_free(avctx->extradata);
+            avctx->extradata      = q->extradata;
+            avctx->extradata_size = q->extradata_size;
+        }
     }
 
     return ret;

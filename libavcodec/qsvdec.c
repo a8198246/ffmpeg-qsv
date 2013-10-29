@@ -527,10 +527,9 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
             if (busymsec > q->options.timeout) {
                 av_log(avctx, AV_LOG_WARNING, "Timeout, device is so busy\n");
                 break;
-            } else {
-                av_usleep(1000);
-                busymsec++;
             }
+            av_usleep(1000);
+            busymsec++;
         } else {
             busymsec = 0;
         }
