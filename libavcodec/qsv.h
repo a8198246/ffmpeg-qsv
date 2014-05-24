@@ -23,42 +23,16 @@
 #ifndef AVCODEC_QSV_H
 #define AVCODEC_QSV_H
 
-#include <stdint.h>
-#include <sys/types.h>
-#include <mfx/mfxvideo.h>
-
-#include "libavutil/avutil.h"
-
 #define QSV_VERSION_MAJOR 1
 #define QSV_VERSION_MINOR 1
 
-#define ASYNC_DEPTH_DEFAULT 4       // internal parallelism
-
-typedef struct QSVContext {
-    AVClass *class;
-    mfxSession session;
-    mfxVideoParam param;
-    mfxFrameSurface1 *surfaces;
-    int64_t *dts;
-    int64_t *pts;
-    int nb_surfaces;
-    mfxSyncPoint sync;
-    mfxBitstream bs;
-    int last_ret;
-    int async_depth;
-    AVPacketList *pending, *pending_end;
-} QSVContext;
+#define ASYNC_DEPTH_DEFAULT 1       // internal parallelism
+#define SYNC_TIME_DEFAULT   5000    // 5s
+#define TIMEOUT_DEFAULT     5000    // 5s
 
 int ff_qsv_error(int mfx_err);
 
-int ff_qsv_init(AVCodecContext *s, QSVContext *q);
+int ff_qsv_codec_id_to_mfx(enum AVCodecID codec_id);
 
-int ff_qsv_decode(AVCodecContext *s, QSVContext *q,
-                  AVFrame *frame, int *got_frame,
-                  AVPacket *avpkt);
-
-int ff_qsv_flush(QSVContext *q);
-
-int ff_qsv_close(QSVContext *q);
 
 #endif /* AVCODEC_QSV_H */
