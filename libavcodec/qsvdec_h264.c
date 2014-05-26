@@ -39,63 +39,101 @@ typedef struct QSVDecH264Context {
     AVBitStreamFilterContext *bsf;
     uint8_t *extradata;
     int extradata_size;
+    int initialized;
 } QSVDecH264Context;
 
 static const uint8_t fake_idr[] = { 0x00, 0x00, 0x01, 0x65 };
 
-static av_cold int qsv_dec_init(AVCodecContext *avctx)
+static int qsv_dec_init_internal(AVCodecContext *avctx, AVPacket *avpkt)
 {
     QSVDecH264Context *q = avctx->priv_data;
     mfxBitstream *bs     = &q->qsv.bs;
-    int ret;
+    uint8_t *tmp         = NULL;
+    uint8_t *header      = avctx->extradata;
+    int header_size      = avctx->extradata_size;
+    int ret              = 0;
 
     avctx->pix_fmt = AV_PIX_FMT_NV12;
 
-    if (!(q->bsf = av_bitstream_filter_init("h264_mp4toannexb")))
-        return AVERROR(ENOMEM);
+    if (avpkt) {
+        header      = avpkt->data;
+        header_size = avpkt->size;
+    } else if (!avctx->extradata_size) {
+        return 0;
+    } else if (avctx->extradata[0] == 1) {
+        uint8_t *dummy = NULL;
+        int dummy_size = 0;
 
-    q->extradata      = av_malloc(avctx->extradata_size + FF_INPUT_BUFFER_PADDING_SIZE);
-    q->extradata_size = avctx->extradata_size;
-    memcpy(q->extradata, avctx->extradata, avctx->extradata_size);
-    FFSWAP(uint8_t *, avctx->extradata,      q->extradata);
-    FFSWAP(int,       avctx->extradata_size, q->extradata_size);
+        tmp = av_malloc(avctx->extradata_size + FF_INPUT_BUFFER_PADDING_SIZE);
+        if (!tmp)
+            goto fail;
+        q->extradata      = tmp;
+        q->extradata_size = avctx->extradata_size;
+        memcpy(q->extradata, avctx->extradata, avctx->extradata_size);
 
-    // Data and DataLength passed as dummy pointers
-    av_bitstream_filter_filter(q->bsf, avctx, NULL,
-                               &bs->Data, &bs->DataLength,
-                               NULL, 0, 0);
+        q->bsf = av_bitstream_filter_init("h264_mp4toannexb");
+        if (!q->bsf)
+            goto fail;
 
-    //FIXME feed it a fake IDR directly
-    bs->Data       = av_malloc(avctx->extradata_size + sizeof(fake_idr));
-    bs->DataLength = avctx->extradata_size;
+        FFSWAP(uint8_t *, avctx->extradata,      q->extradata);
+        FFSWAP(int,       avctx->extradata_size, q->extradata_size);
+        // Convert extradata from AVCC format to Annex B format
+        av_bitstream_filter_filter(q->bsf, avctx, NULL,
+                                   &dummy, &dummy_size,
+                                   NULL, 0, 0);
+        FFSWAP(uint8_t *, avctx->extradata,      q->extradata);
+        FFSWAP(int,       avctx->extradata_size, q->extradata_size);
 
-    memcpy(bs->Data, avctx->extradata, avctx->extradata_size);
-    memcpy(bs->Data + bs->DataLength, fake_idr, sizeof(fake_idr));
-
-    bs->DataLength += sizeof(fake_idr);
-
-    bs->MaxLength = bs->DataLength;
-
-    ret = ff_qsv_dec_init(avctx, &q->qsv);
-    if (ret < 0) {
-        av_freep(&bs->Data);
-        av_bitstream_filter_close(q->bsf);
+        header      = q->extradata;
+        header_size = q->extradata_size;
     }
 
-    FFSWAP(uint8_t *, avctx->extradata,      q->extradata);
-    FFSWAP(int,       avctx->extradata_size, q->extradata_size);
+    //FIXME feed it a fake IDR directly
+    tmp = av_malloc(header_size + sizeof(fake_idr));
+    if (!tmp)
+        goto fail;
+    bs->Data       = tmp;
+    bs->DataLength = header_size + sizeof(fake_idr);
+    bs->MaxLength  = bs->DataLength;
+    memcpy(bs->Data, header, header_size);
+    memcpy(bs->Data + header_size, fake_idr, sizeof(fake_idr));
+
+    ret = ff_qsv_dec_init(avctx, &q->qsv);
+    if (ret < 0)
+        goto fail;
+
+    q->initialized = 1;
 
     return ret;
+
+fail:
+    av_freep(&bs->Data);
+    av_freep(&q->extradata);
+    if (q->bsf)
+        av_bitstream_filter_close(q->bsf);
+    if (!ret)
+        ret = AVERROR(ENOMEM);
+
+    return ret;
+}
+
+static av_cold int qsv_dec_init(AVCodecContext *avctx)
+{
+    return qsv_dec_init_internal(avctx, NULL);
 }
 
 static int qsv_dec_frame(AVCodecContext *avctx, void *data,
                          int *got_frame, AVPacket *avpkt)
 {
-    QSVDecH264Context *q    = avctx->priv_data;
-    AVFrame *frame          = data;
-    uint8_t *p              = NULL;
-    int size                = 0;
+    QSVDecH264Context *q = avctx->priv_data;
+    AVFrame *frame       = data;
     int ret;
+
+    if (!q->initialized) {
+        ret = qsv_dec_init_internal(avctx, avpkt);
+        if (ret < 0)
+            return ret;
+    }
 
     // Reinit so finished flushing old video parameter cached frames
     if (q->qsv.need_reinit && q->qsv.last_ret == MFX_ERR_MORE_DATA &&
@@ -103,30 +141,32 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
         if ((ret = ff_qsv_dec_reinit(avctx, &q->qsv)) < 0)
             return ret;
 
-    FFSWAP(uint8_t *, avctx->extradata,      q->extradata);
-    FFSWAP(int,       avctx->extradata_size, q->extradata_size);
-
-    av_bitstream_filter_filter(q->bsf, avctx, NULL,
-                               &p, &size,
-                               avpkt->data, avpkt->size, 0);
-
-    if (p != avpkt->data) {
+    if (q->bsf) {
         AVPacket pkt = { 0 };
+        uint8_t *data = NULL;
+        int data_size = 0;
 
-        av_packet_copy_props(&pkt, avpkt);
+        FFSWAP(uint8_t *, avctx->extradata,      q->extradata);
+        FFSWAP(int,       avctx->extradata_size, q->extradata_size);
+        av_bitstream_filter_filter(q->bsf, avctx, NULL,
+                                   &data, &data_size,
+                                   avpkt->data, avpkt->size, 0);
+        FFSWAP(uint8_t *, avctx->extradata,      q->extradata);
+        FFSWAP(int,       avctx->extradata_size, q->extradata_size);
 
-        pkt.data = p;
-        pkt.size = size;
-
-        ret = ff_qsv_dec_frame(avctx, &q->qsv, frame, got_frame, &pkt);
-
-        av_free(p);
+        //ret = av_packet_from_data(&pkt, data, data_size);
+        pkt.data = data;
+        pkt.size = data_size;
+        if (!ret) {
+            ret = av_packet_copy_props(&pkt, avpkt);
+            if (!ret)
+                ret = ff_qsv_dec_frame(avctx, &q->qsv, frame, got_frame, &pkt);
+            //av_packet_unref(&pkt);
+        }
+        av_free(data);
     } else {
         ret = ff_qsv_dec_frame(avctx, &q->qsv, frame, got_frame, avpkt);
     }
-
-    FFSWAP(uint8_t *, avctx->extradata,      q->extradata);
-    FFSWAP(int,       avctx->extradata_size, q->extradata_size);
 
     return ret;
 }
@@ -134,11 +174,13 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
 static int qsv_dec_close(AVCodecContext *avctx)
 {
     QSVDecH264Context *q = avctx->priv_data;
-    int ret = ff_qsv_dec_close(&q->qsv);
+    int ret              = ff_qsv_dec_close(&q->qsv);
 
-    av_bitstream_filter_close(q->bsf);
+    if (q->bsf)
+        av_bitstream_filter_close(q->bsf);
     av_freep(&q->qsv.bs.Data);
     av_freep(&q->extradata);
+
     return ret;
 }
 
