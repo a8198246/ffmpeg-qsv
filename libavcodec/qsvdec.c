@@ -141,16 +141,17 @@ static void free_surface_pool(QSVDecContext *q)
 
     while (*pool) {
         buf = *pool;
-        *pool = buf->pool;
-        av_frame_free((AVFrame **)&buf->surface.Data.MemId);
+        *pool = buf->pool_next;
+        av_frame_free((AVFrame **)&buf->frame);
         av_freep(&buf);
     }
 }
 
 static int set_surface_data(AVCodecContext *avctx, QSVDecContext *q,
-                            mfxFrameSurface1 *surf)
+                            QSVDecBuffer *buf)
 {
-    AVFrame *frame = surf->Data.MemId;
+    mfxFrameSurface1 *surf = &buf->surface;
+    AVFrame *frame         = buf->frame;
     int ret;
 
     if (!frame) {
@@ -168,7 +169,8 @@ static int set_surface_data(AVCodecContext *avctx, QSVDecContext *q,
         }
     }
 
-    surf->Data.MemId = frame;
+    buf->frame = frame;
+    surf->Data.MemId = buf;
     surf->Data.Y     = frame->data[0];
     surf->Data.UV    = frame->data[1];
     surf->Data.Pitch = frame->linesize[0];
@@ -177,79 +179,70 @@ static int set_surface_data(AVCodecContext *avctx, QSVDecContext *q,
     return 0;
 }
 
-static mfxFrameSurface1 *get_surface(AVCodecContext *avctx, QSVDecContext *q)
+static int realloc_buffer(QSVDecContext *q, int old_nmemb, int new_nmemb)
+{
+    QSVDecTimeStamp *tmp = av_realloc_array(q->ts, new_nmemb, sizeof(*q->ts));
+    if (!tmp)
+        return AVERROR(ENOMEM);
+
+    q->ts = tmp;
+    q->nb_ts = new_nmemb;
+
+    for (int i = old_nmemb; i < q->nb_ts; i++)
+        q->ts[i].pts = q->ts[i].dts = AV_NOPTS_VALUE;
+
+    return 0;
+}
+
+static QSVDecBuffer *get_buffer(AVCodecContext *avctx, QSVDecContext *q)
 {
     QSVDecBuffer **pool = &q->buf_pool;
     QSVDecBuffer *buf;
-    mfxFrameSurface1 *surf;
 
     while (*pool && ((*pool)->surface.Data.Locked || (*pool)->sync))
-        pool = &(*pool)->pool;
+        pool = &(*pool)->pool_next;
 
     if (!(*pool))
         if (!(*pool = av_mallocz(sizeof(QSVDecBuffer))))
             return NULL;
 
     buf = *pool;
-    buf->next = NULL;
+    buf->sync_next = NULL;
 
-    surf = &buf->surface;
-    if (set_surface_data(avctx, q, surf) < 0)
+    if (set_surface_data(avctx, q, buf) < 0)
         return NULL;
 
-    return surf;
+    return buf;
 }
 
-static void release_surface(QSVDecContext *q, mfxFrameSurface1 *surf)
+static void put_sync_list(QSVDecContext *q, QSVDecBuffer *list)
 {
-    QSVDecBuffer *list = q->buf_pool;
+    list->sync_next = NULL;
 
-    while (list && &list->surface != surf)
-        list = list->pool;
+    if (q->pending_sync_end)
+        q->pending_sync_end->sync_next = list;
+    else
+        q->pending_sync = list;
 
-    if (list)
-        list->sync = 0;
+    q->pending_sync_end = list;
+
+    q->nb_sync++;
 }
 
-static void put_sync(QSVDecContext *q, mfxFrameSurface1 *surf,
-                     mfxSyncPoint sync)
-{
-    QSVDecBuffer *list = q->buf_pool;
-
-    while (list && &list->surface != surf)
-        list = list->pool;
-
-    if (list) {
-        list->sync = sync;
-        list->next = NULL;
-
-        if (q->pending_sync_end)
-            q->pending_sync_end->next = list;
-        else
-            q->pending_sync = list;
-
-        q->pending_sync_end = list;
-
-        q->nb_sync++;
-    }
-}
-
-static void get_sync(QSVDecContext *q, mfxFrameSurface1 **surf,
-                     mfxSyncPoint *sync)
+static QSVDecBuffer *get_sync_list(QSVDecContext *q)
 {
     QSVDecBuffer *list = q->pending_sync;
 
-    *surf = &list->surface;
-    *sync = list->sync;
-
-    q->pending_sync = list->next;
+    q->pending_sync = list->sync_next;
 
     if (!q->pending_sync)
         q->pending_sync_end = NULL;
 
     q->nb_sync--;
 
-    list->next = NULL;
+    list->sync_next = NULL;
+
+    return list;
 }
 
 static void free_sync(QSVDecContext *q)
@@ -334,7 +327,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
                      AVFrame *frame, int *got_frame,
                      AVPacket *avpkt)
 {
-    mfxFrameSurface1 *worksurf;
+    QSVDecBuffer *workbuf;
     mfxFrameSurface1 *outsurf;
     mfxSyncPoint outsync = 0;
     mfxBitstream *inbs   = &q->bs;
@@ -403,12 +396,13 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
             }
         }
 
-        worksurf = get_surface(avctx, q);
-        if (!worksurf)
+        workbuf = get_buffer(avctx, q);
+        if (!workbuf)
             break;
 
         ret = MFXVideoDECODE_DecodeFrameAsync(q->session, inbs,
-                                              worksurf, &outsurf, &outsync);
+                                              &workbuf->surface,
+                                              &outsurf, &outsync);
 
         if (ret == MFX_WRN_DEVICE_BUSY || ret == MFX_ERR_DEVICE_FAILED) {
             if (busymsec > q->timeout) {
@@ -433,18 +427,21 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
     if (ret == MFX_ERR_MORE_DATA)
         ret = 0;
 
-    if (outsync)
-        put_sync(q, outsurf, outsync);
+    if (outsync && outsurf) {
+        QSVDecBuffer *buf = outsurf->Data.MemId;
+        buf->sync = outsync;
+        put_sync_list(q, buf);
+    }
 
     if (q->pending_sync &&
         (q->nb_sync >= q->req.NumFrameMin || !size || q->need_reinit)) {
         mfxFrameSurface1 *surf;
-        mfxSyncPoint sync;
         int64_t pts, dts;
-        get_sync(q, &surf, &sync);
+        QSVDecBuffer *buf = get_sync_list(q);
 
-        MFXVideoCORE_SyncOperation(q->session, sync, SYNC_TIME_DEFAULT);
+        MFXVideoCORE_SyncOperation(q->session, buf->sync, SYNC_TIME_DEFAULT);
 
+        surf = &buf->surface;
         pts = surf->Data.TimeStamp;
         if (q->ts_by_qsv) {
             dts = pts;
@@ -454,7 +451,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
                 return ret;
         }
 
-        av_frame_move_ref(frame, surf->Data.MemId);
+        av_frame_move_ref(frame, buf->frame);
 
         frame->pkt_pts = frame->pts = pts;
         frame->pkt_dts = dts;
@@ -469,8 +466,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
         frame->sample_aspect_ratio.num = surf->Info.AspectRatioW;
         frame->sample_aspect_ratio.den = surf->Info.AspectRatioH;
 
-        release_surface(q, surf);
-
+        buf->sync = 0;
         q->decoded_cnt++;
         *got_frame = 1;
     }

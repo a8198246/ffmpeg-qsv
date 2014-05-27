@@ -38,8 +38,9 @@ typedef struct QSVDecTimeStamp {
 typedef struct QSVDecBuffer {
     mfxFrameSurface1 surface;
     mfxSyncPoint sync;
-    struct QSVDecBuffer *next;
-    struct QSVDecBuffer *pool;
+    AVFrame *frame;
+    struct QSVDecBuffer *sync_next;
+    struct QSVDecBuffer *pool_next;
 } QSVDecBuffer;
 
 typedef struct QSVDecContext {
