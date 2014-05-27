@@ -53,14 +53,10 @@ static int qsv_dec_init_internal(AVCodecContext *avctx, AVPacket *avpkt)
     int header_size      = avctx->extradata_size;
     int ret              = 0;
 
-    avctx->pix_fmt = AV_PIX_FMT_NV12;
-
     if (avpkt) {
         header      = avpkt->data;
         header_size = avpkt->size;
-    } else if (!avctx->extradata_size) {
-        return 0;
-    } else if (avctx->extradata[0] == 1) {
+    } else if (avctx->extradata_size > 0 && avctx->extradata[0] == 1) {
         uint8_t *dummy = NULL;
         int dummy_size = 0;
 
@@ -111,14 +107,17 @@ fail:
     av_freep(&q->extradata);
     if (q->bsf)
         av_bitstream_filter_close(q->bsf);
-    if (!ret)
-        ret = AVERROR(ENOMEM);
 
-    return ret;
+    return AVERROR(ENOMEM);
 }
 
 static av_cold int qsv_dec_init(AVCodecContext *avctx)
 {
+    avctx->pix_fmt = AV_PIX_FMT_NV12;
+
+    if (!avctx->extradata_size)
+        return 0; // Call qsv_dec_init_internal() in qsv_dec_frame()
+
     return qsv_dec_init_internal(avctx, NULL);
 }
 
@@ -137,9 +136,11 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
 
     // Reinit so finished flushing old video parameter cached frames
     if (q->qsv.need_reinit && q->qsv.last_ret == MFX_ERR_MORE_DATA &&
-        !q->qsv.nb_sync)
-        if ((ret = ff_qsv_dec_reinit(avctx, &q->qsv)) < 0)
+        !q->qsv.nb_sync) {
+        ret = ff_qsv_dec_reinit(avctx, &q->qsv);
+        if (ret < 0)
             return ret;
+    }
 
     if (q->bsf) {
         AVPacket pkt = { 0 };
@@ -154,16 +155,13 @@ static int qsv_dec_frame(AVCodecContext *avctx, void *data,
         FFSWAP(uint8_t *, avctx->extradata,      q->extradata);
         FFSWAP(int,       avctx->extradata_size, q->extradata_size);
 
-        //ret = av_packet_from_data(&pkt, data, data_size);
-        pkt.data = data;
-        pkt.size = data_size;
+        ret = av_packet_from_data(&pkt, data, data_size);
         if (!ret) {
             ret = av_packet_copy_props(&pkt, avpkt);
             if (!ret)
                 ret = ff_qsv_dec_frame(avctx, &q->qsv, frame, got_frame, &pkt);
-            //av_packet_unref(&pkt);
+            av_packet_unref(&pkt);
         }
-        av_free(data);
     } else {
         ret = ff_qsv_dec_frame(avctx, &q->qsv, frame, got_frame, avpkt);
     }

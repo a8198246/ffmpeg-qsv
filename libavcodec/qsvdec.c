@@ -342,10 +342,12 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
 
     *got_frame = 0;
 
-    if (size)
-        if ((ret = ff_packet_list_put(&q->pending_dec,
-                                      &q->pending_dec_end, avpkt)) < 0)
+    if (size) {
+        ret = ff_packet_list_put(&q->pending_dec,
+                                 &q->pending_dec_end, avpkt);
+        if (ret < 0)
             return ret;
+    }
 
     // (2) Flush cached frames before reinit
     if (q->need_reinit)
@@ -398,13 +400,14 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
             }
         }
 
-        if (!(insurf = get_surface(avctx, q)))
+        insurf = get_surface(avctx, q);
+        if (!insurf)
             break;
 
         ret = MFXVideoDECODE_DecodeFrameAsync(q->session, bs,
                                               insurf, &outsurf, &sync);
 
-        if (ret == MFX_WRN_DEVICE_BUSY) {
+        if (ret == MFX_WRN_DEVICE_BUSY || ret == MFX_ERR_DEVICE_FAILED) {
             if (busymsec > q->timeout) {
                 av_log(avctx, AV_LOG_WARNING, "Timeout, device is so busy\n");
                 return AVERROR(EIO);
@@ -417,6 +420,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
         }
     } while (ret == MFX_ERR_MORE_SURFACE ||
              ret == MFX_ERR_MORE_DATA ||
+             ret == MFX_ERR_DEVICE_FAILED ||
              ret == MFX_WRN_DEVICE_BUSY ||
              ret == MFX_WRN_VIDEO_PARAM_CHANGED ||
              ret == MFX_ERR_INCOMPATIBLE_VIDEO_PARAM);
@@ -434,7 +438,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
         int64_t pts, dts;
         get_sync(q, &outsurf, &sync);
 
-        MFXVideoCORE_SyncOperation(q->session, sync, 60000);
+        MFXVideoCORE_SyncOperation(q->session, sync, SYNC_TIME_DEFAULT);
 
         pts = outsurf->Data.TimeStamp;
         if (q->ts_by_qsv)
