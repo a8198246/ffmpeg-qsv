@@ -134,17 +134,13 @@ static int bitstream_enqueue(mfxBitstream *bs, uint8_t *data, int size)
     return 0;
 }
 
-static void free_surface_pool(QSVDecContext *q)
+static void free_buffer_pool(QSVDecContext *q)
 {
-    QSVDecBuffer **pool = &q->buf_pool;
-    QSVDecBuffer *buf;
-
-    while (*pool) {
-        buf = *pool;
-        *pool = buf->pool_next;
-        av_frame_free((AVFrame **)&buf->frame);
-        av_freep(&buf);
+    for (int i = 0; i < q->nb_buf; i++) {
+        av_frame_free((AVFrame **)&q->buf[i]->frame);
+        av_freep(&q->buf[i]);
     }
+    av_freep(&q->buf);
 }
 
 static int set_surface_data(AVCodecContext *avctx, QSVDecContext *q,
@@ -179,43 +175,58 @@ static int set_surface_data(AVCodecContext *avctx, QSVDecContext *q,
     return 0;
 }
 
-static int realloc_buffer(QSVDecContext *q, int old_nmemb, int new_nmemb)
+static int realloc_buffer_pool(QSVDecContext *q, int old_nmemb, int new_nmemb)
 {
-    QSVDecTimeStamp *tmp = av_realloc_array(q->ts, new_nmemb, sizeof(*q->ts));
-    if (!tmp)
+    QSVDecBuffer **pp = av_realloc_array(q->buf, new_nmemb, sizeof(QSVDecBuffer *));
+    if (!pp) {
+        av_log(q, AV_LOG_ERROR, "av_realloc_array() failed\n");
         return AVERROR(ENOMEM);
+    }
 
-    q->ts = tmp;
-    q->nb_ts = new_nmemb;
+    q->buf = pp;
+    q->nb_buf = new_nmemb;
 
-    for (int i = old_nmemb; i < q->nb_ts; i++)
-        q->ts[i].pts = q->ts[i].dts = AV_NOPTS_VALUE;
+    for (int i = old_nmemb; i < q->nb_buf; i++) {
+        if (!(q->buf[i] = av_mallocz(sizeof(QSVDecBuffer)))) {
+            q->nb_buf = i;
+            av_log(q, AV_LOG_ERROR, "av_mallocz() failed\n");
+            return AVERROR(ENOMEM);
+        }
+    }
 
     return 0;
 }
 
-static QSVDecBuffer *get_buffer(AVCodecContext *avctx, QSVDecContext *q)
+static void release_buffer(QSVDecBuffer *list)
 {
-    QSVDecBuffer **pool = &q->buf_pool;
-    QSVDecBuffer *buf;
-
-    while (*pool && ((*pool)->surface.Data.Locked || (*pool)->sync))
-        pool = &(*pool)->pool_next;
-
-    if (!(*pool))
-        if (!(*pool = av_mallocz(sizeof(QSVDecBuffer))))
-            return NULL;
-
-    buf = *pool;
-    buf->sync_next = NULL;
-
-    if (set_surface_data(avctx, q, buf) < 0)
-        return NULL;
-
-    return buf;
+    list->sync = 0;
 }
 
-static void put_sync_list(QSVDecContext *q, QSVDecBuffer *list)
+static QSVDecBuffer *get_buffer(AVCodecContext *avctx, QSVDecContext *q)
+{
+    int i;
+
+    if (!q->buf)
+        if (realloc_buffer_pool(q, 0, q->req.NumFrameSuggested))
+            return NULL;
+
+    for (i = 0; i < q->nb_buf; i++)
+        if (!q->buf[i]->surface.Data.Locked && !q->buf[i]->sync)
+            break;
+
+    if (i == q->nb_buf)
+        if (realloc_buffer_pool(q, q->nb_buf, q->nb_buf * 2))
+            return NULL;
+
+    q->buf[i]->sync_next = NULL;
+
+    if (set_surface_data(avctx, q, q->buf[i]) < 0)
+        return NULL;
+
+    return q->buf[i];
+}
+
+static void add_sync_list(QSVDecContext *q, QSVDecBuffer *list)
 {
     list->sync_next = NULL;
 
@@ -229,7 +240,7 @@ static void put_sync_list(QSVDecContext *q, QSVDecBuffer *list)
     q->nb_sync++;
 }
 
-static QSVDecBuffer *get_sync_list(QSVDecContext *q)
+static QSVDecBuffer *remove_sync_list(QSVDecContext *q)
 {
     QSVDecBuffer *list = q->pending_sync;
 
@@ -430,18 +441,25 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
     if (outsync && outsurf) {
         QSVDecBuffer *buf = outsurf->Data.MemId;
         buf->sync = outsync;
-        put_sync_list(q, buf);
+        add_sync_list(q, buf);
     }
 
     if (q->pending_sync &&
         (q->nb_sync >= q->req.NumFrameMin || !size || q->need_reinit)) {
         mfxFrameSurface1 *surf;
         int64_t pts, dts;
-        QSVDecBuffer *buf = get_sync_list(q);
+        QSVDecBuffer *outbuf = q->pending_sync;
 
-        MFXVideoCORE_SyncOperation(q->session, buf->sync, SYNC_TIME_DEFAULT);
+        ret = MFXVideoCORE_SyncOperation(q->session, outbuf->sync,
+                                         SYNC_TIME_DEFAULT);
+        if (ret < 0) {
+            av_log(avctx, AV_LOG_ERROR, "MFXVideoCORE_SyncOperation(): %d\n", ret);
+            return ff_qsv_error(ret);
+        }
 
-        surf = &buf->surface;
+        remove_sync_list(q);
+
+        surf = &outbuf->surface;
         pts = surf->Data.TimeStamp;
         if (q->ts_by_qsv) {
             dts = pts;
@@ -451,7 +469,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
                 return ret;
         }
 
-        av_frame_move_ref(frame, buf->frame);
+        av_frame_move_ref(frame, outbuf->frame);
 
         frame->pkt_pts = frame->pts = pts;
         frame->pkt_dts = dts;
@@ -466,8 +484,10 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
         frame->sample_aspect_ratio.num = surf->Info.AspectRatioW;
         frame->sample_aspect_ratio.den = surf->Info.AspectRatioH;
 
-        buf->sync = 0;
+        release_buffer(outbuf);
+
         q->decoded_cnt++;
+
         *got_frame = 1;
     }
 
@@ -488,7 +508,7 @@ int ff_qsv_dec_flush(QSVDecContext *q)
     q->decoded_cnt   = 0;
     q->bs.DataOffset = q->bs.DataLength = 0;
 
-    free_surface_pool(q);
+    free_buffer_pool(q);
 
     free_sync(q);
 
@@ -503,7 +523,7 @@ int ff_qsv_dec_close(QSVDecContext *q)
 {
     int ret = MFXClose(q->session);
 
-    free_surface_pool(q);
+    free_buffer_pool(q);
 
     av_freep(&q->ts);
 
@@ -520,7 +540,7 @@ int ff_qsv_dec_reinit(AVCodecContext *avctx, QSVDecContext *q)
 
     q->decoded_cnt = 0;
 
-    free_surface_pool(q);
+    free_buffer_pool(q);
 
     free_sync(q);
 
