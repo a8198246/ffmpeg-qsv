@@ -257,7 +257,7 @@ static QSVDecBuffer *remove_sync_list(QSVDecContext *q)
     return list;
 }
 
-static void free_sync(QSVDecContext *q)
+static void free_sync_list(QSVDecContext *q)
 {
     q->pending_sync     = NULL;
     q->pending_sync_end = NULL;
@@ -296,7 +296,7 @@ static int get_dts(QSVDecContext *q, int64_t pts, int64_t *dts)
         av_log(q, AV_LOG_ERROR,
                "Requested pts %"PRId64" does not match any dts\n",
                pts);
-        return AVERROR_BUG;
+        //return AVERROR_BUG;
     }
     *dts = q->ts[i].dts;
 
@@ -447,8 +447,8 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
 
     if (q->pending_sync &&
         (q->nb_sync >= q->req.NumFrameMin || !size || q->need_reinit)) {
-        mfxFrameSurface1 *surf;
         int64_t pts, dts;
+        mfxFrameSurface1 *surf;
         QSVDecBuffer *outbuf = q->pending_sync;
 
         ret = MFXVideoCORE_SyncOperation(q->session, outbuf->sync,
@@ -500,10 +500,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
 
 int ff_qsv_dec_flush(QSVDecContext *q)
 {
-    int ret;
-
-    if ((ret = MFXVideoDECODE_Reset(q->session, &q->param)))
-        ret = ff_qsv_error(ret);
+    int ret = MFXVideoDECODE_Reset(q->session, &q->param);
 
     q->last_ret      = MFX_ERR_MORE_DATA;
     q->decoded_cnt   = 0;
@@ -511,13 +508,13 @@ int ff_qsv_dec_flush(QSVDecContext *q)
 
     free_buffer_pool(q);
 
-    free_sync(q);
+    free_sync_list(q);
 
     av_freep(&q->ts);
 
     ff_packet_list_free(&q->pending_dec, &q->pending_dec_end);
 
-    return ret;
+    return ff_qsv_error(ret);
 }
 
 int ff_qsv_dec_close(QSVDecContext *q)
@@ -543,7 +540,7 @@ int ff_qsv_dec_reinit(AVCodecContext *avctx, QSVDecContext *q)
 
     free_buffer_pool(q);
 
-    free_sync(q);
+    free_sync_list(q);
 
     av_freep(&q->ts);
 
