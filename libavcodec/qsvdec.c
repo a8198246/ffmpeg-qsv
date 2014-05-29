@@ -141,6 +141,7 @@ static void free_buffer_pool(QSVDecContext *q)
         av_freep(&q->buf[i]);
     }
     av_freep(&q->buf);
+    q->nb_buf = 0;
 }
 
 static int set_surface_data(AVCodecContext *avctx, QSVDecContext *q,
