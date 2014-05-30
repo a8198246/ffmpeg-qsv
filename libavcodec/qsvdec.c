@@ -345,6 +345,10 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
     mfxBitstream *inbs   = &q->bs;
     int size             = avpkt->size;
     int busymsec         = 0;
+    int paff_2nd_field   = avctx->codec_id == AV_CODEC_ID_H264 &&
+                           avpkt->pts == AV_NOPTS_VALUE &&
+                           avpkt->dts == AV_NOPTS_VALUE &&
+                           avpkt->size;
     int ret;
 
     *got_frame = 0;
@@ -354,7 +358,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
                                  &q->pending_dec_end, avpkt);
         if (ret < 0)
             return ret;
-        if (avpkt->pts != AV_NOPTS_VALUE && avpkt->dts != AV_NOPTS_VALUE)
+        if (!paff_2nd_field)
             avctx->has_b_frames++;
     }
 
@@ -449,8 +453,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
 
     if (q->pending_sync &&
         (!size || q->need_reinit ||
-         (q->nb_sync >= q->req.NumFrameMin &&
-          avpkt->pts != AV_NOPTS_VALUE && avpkt->dts != AV_NOPTS_VALUE))) {
+         (q->nb_sync >= q->req.NumFrameMin && !paff_2nd_field))) {
         int64_t pts, dts;
         mfxFrameSurface1 *surf;
         QSVDecBuffer *outbuf = q->pending_sync;
@@ -495,7 +498,8 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
 
         *got_frame = 1;
 
-        avctx->has_b_frames--;
+        if (avctx->has_b_frames > 0)
+            avctx->has_b_frames--;
     }
 
     if (ret < 0)
