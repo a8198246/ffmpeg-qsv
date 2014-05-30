@@ -354,7 +354,8 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
                                  &q->pending_dec_end, avpkt);
         if (ret < 0)
             return ret;
-        avctx->has_b_frames++;
+        if (avpkt->pts != AV_NOPTS_VALUE && avpkt->dts != AV_NOPTS_VALUE)
+            avctx->has_b_frames++;
     }
 
     // (2) Flush cached frames before reinit
@@ -447,7 +448,9 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
     }
 
     if (q->pending_sync &&
-        (q->nb_sync >= q->req.NumFrameMin || !size || q->need_reinit)) {
+        (!size || q->need_reinit ||
+         (q->nb_sync >= q->req.NumFrameMin &&
+          avpkt->pts != AV_NOPTS_VALUE && avpkt->dts != AV_NOPTS_VALUE))) {
         int64_t pts, dts;
         mfxFrameSurface1 *surf;
         QSVDecBuffer *outbuf = q->pending_sync;
