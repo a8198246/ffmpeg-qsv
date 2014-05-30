@@ -113,7 +113,8 @@ fail:
 
 static av_cold int qsv_dec_init(AVCodecContext *avctx)
 {
-    avctx->pix_fmt = AV_PIX_FMT_NV12;
+    avctx->pix_fmt      = AV_PIX_FMT_NV12;
+    avctx->has_b_frames = 0;
 
     if (!avctx->extradata_size)
         return 0; // Call qsv_dec_init_internal() in qsv_dec_frame()

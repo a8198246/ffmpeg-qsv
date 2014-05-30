@@ -354,6 +354,7 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
                                  &q->pending_dec_end, avpkt);
         if (ret < 0)
             return ret;
+        avctx->has_b_frames++;
     }
 
     // (2) Flush cached frames before reinit
@@ -490,6 +491,8 @@ int ff_qsv_dec_frame(AVCodecContext *avctx, QSVDecContext *q,
         q->decoded_cnt++;
 
         *got_frame = 1;
+
+        avctx->has_b_frames--;
     }
 
     if (ret < 0)
