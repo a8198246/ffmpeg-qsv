@@ -77,6 +77,8 @@ int ff_qsv_codec_id_to_mfx(enum AVCodecID codec_id)
         return MFX_CODEC_MPEG2;
     case AV_CODEC_ID_VC1:
         return MFX_CODEC_VC1;
+    case AV_CODEC_ID_HEVC:
+        return MFX_CODEC_HEVC;
     default:
         break;
     }

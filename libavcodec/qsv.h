@@ -24,7 +24,7 @@
 #define AVCODEC_QSV_H
 
 #define QSV_VERSION_MAJOR 1
-#define QSV_VERSION_MINOR 1
+#define QSV_VERSION_MINOR 8
 
 #define ASYNC_DEPTH_DEFAULT 1       // internal parallelism
 #define SYNC_TIME_DEFAULT   5000    // 5s
